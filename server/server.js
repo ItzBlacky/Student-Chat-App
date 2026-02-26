@@ -1,30 +1,40 @@
+
 const express = require("express");
 const cors = require("cors");
+const pool = require("./db");
 
 const app = express();
 const PORT = 5000;
 
-app.use(cors());        // must come before routes
+app.use(cors());
 app.use(express.json());
 
-// In-memory storage (temporary)
-let courses = [];
-
-// GET all courses
-app.get("/courses", (req, res) => {
-    res.json(courses);
+// GET all courses from database
+app.get("/courses", async (req, res) => {
+    try {
+        const [rows] = await pool.query("SELECT * FROM courses ORDER BY id DESC");
+        res.json(rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Database error" });
+    }
 });
 
-// POST new course
-app.post("/courses", (req, res) => {
+// POST new course to database
+app.post("/courses", async (req, res) => {
     const { name } = req.body;
 
     if (!name) {
         return res.status(400).json({ error: "Course name is required" });
     }
 
-    courses.push(name);
-    res.json({ message: "Course added", courses });
+    try {
+        await pool.query("INSERT INTO courses (name) VALUES (?)", [name]);
+        res.json({ message: "Course added" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Database error" });
+    }
 });
 
 app.listen(PORT, () => {

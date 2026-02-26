@@ -15,7 +15,10 @@ function renderCourses(courses) {
 
     courses.forEach((course) => {
         const li = document.createElement("li");
-        li.textContent = course;
+
+        // Access the actual property from DB row
+        li.textContent = course.name;
+
         courseList.appendChild(li);
     });
 }
