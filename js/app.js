@@ -2,42 +2,39 @@ const courseInput = document.getElementById("courseInput");
 const addCourseBtn = document.getElementById("addCourseBtn");
 const courseList = document.getElementById("courseList");
 
-// Load saved courses from localStorage
-let courses = JSON.parse(localStorage.getItem("courses")) || [];
+const API_URL = "http://localhost:5000/courses";
 
-function saveCourses() {
-    localStorage.setItem("courses", JSON.stringify(courses));
+async function fetchCourses() {
+    const response = await fetch(API_URL);
+    const data = await response.json();
+    renderCourses(data);
 }
 
-function renderCourses() {
+function renderCourses(courses) {
     courseList.innerHTML = "";
 
-    courses.forEach((course, index) => {
+    courses.forEach((course) => {
         const li = document.createElement("li");
         li.textContent = course;
-
-        const deleteBtn = document.createElement("button");
-        deleteBtn.textContent = "Delete";
-        deleteBtn.onclick = () => {
-            courses.splice(index, 1);
-            saveCourses();
-            renderCourses();
-        };
-
-        li.appendChild(deleteBtn);
         courseList.appendChild(li);
     });
 }
 
-addCourseBtn.onclick = () => {
+addCourseBtn.onclick = async () => {
     const courseName = courseInput.value.trim();
-    if (courseName !== "") {
-        courses.push(courseName);
-        courseInput.value = "";
-        saveCourses();
-        renderCourses();
-    }
+    if (!courseName) return;
+
+    await fetch(API_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name: courseName })
+    });
+
+    courseInput.value = "";
+    fetchCourses();
 };
 
-// Initial render
-renderCourses();
+// Load courses on page load
+fetchCourses();
