@@ -37,6 +37,44 @@ app.post("/courses", async (req, res) => {
     }
 });
 
+// GET messages for a specific course
+app.get("/courses/:id/messages", async (req, res) => {
+    const courseId = req.params.id;
+
+    try {
+        const [rows] = await pool.query(
+            "SELECT * FROM messages WHERE course_id = ? ORDER BY id ASC",
+            [courseId]
+        );
+
+        res.json(rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// POST new message for a course
+app.post("/courses/:id/messages", async (req, res) => {
+    const courseId = req.params.id;
+    const { content } = req.body;
+
+    if (!content) {
+        return res.status(400).json({ error: "Message content required" });
+    }
+
+    try {
+        await pool.query(
+            "INSERT INTO messages (course_id, content) VALUES (?, ?)",
+            [courseId, content]
+        );
+
+        res.json({ message: "Message added" });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Database error" });
+    }
+});
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
