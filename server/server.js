@@ -1,80 +1,52 @@
+require("dotenv").config();
+console.log("JWT_SECRET:", process.env.JWT_SECRET);
 
 const express = require("express");
 const cors = require("cors");
-const pool = require("./db");
+const http = require("http");
+const { Server } = require("socket.io");
+
+const authRoutes = require("./routes/auth");
+const coursesRoutes = require("./routes/courses");
+const messagesRoutes = require("./routes/messages");
 
 const app = express();
-const PORT = 5000;
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: "*"
+  }
+});
 
 app.use(cors());
 app.use(express.json());
 
-// GET all courses from database
-app.get("/courses", async (req, res) => {
-    try {
-        const [rows] = await pool.query("SELECT * FROM courses ORDER BY id DESC");
-        res.json(rows);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Database error" });
-    }
+// allow routes to access socket
+app.set("io", io);
+
+// ROUTES
+app.use("/auth", authRoutes);
+app.use("/courses", coursesRoutes);
+app.use("/courses", messagesRoutes);
+
+// SOCKET CONNECTION
+io.on("connection", (socket) => {
+
+  console.log("User connected:", socket.id);
+
+  socket.on("joinCourse", (courseId) => {
+    socket.join(`course_${courseId}`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+  });
+
 });
 
-// POST new course to database
-app.post("/courses", async (req, res) => {
-    const { name } = req.body;
+const PORT = process.env.PORT || 5000;
 
-    if (!name) {
-        return res.status(400).json({ error: "Course name is required" });
-    }
-
-    try {
-        await pool.query("INSERT INTO courses (name) VALUES (?)", [name]);
-        res.json({ message: "Course added" });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Database error" });
-    }
-});
-
-// GET messages for a specific course
-app.get("/courses/:id/messages", async (req, res) => {
-    const courseId = req.params.id;
-
-    try {
-        const [rows] = await pool.query(
-            "SELECT * FROM messages WHERE course_id = ? ORDER BY id ASC",
-            [courseId]
-        );
-
-        res.json(rows);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Database error" });
-    }
-});
-
-// POST new message for a course
-app.post("/courses/:id/messages", async (req, res) => {
-    const courseId = req.params.id;
-    const { content } = req.body;
-
-    if (!content) {
-        return res.status(400).json({ error: "Message content required" });
-    }
-
-    try {
-        await pool.query(
-            "INSERT INTO messages (course_id, content) VALUES (?, ?)",
-            [courseId, content]
-        );
-
-        res.json({ message: "Message added" });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Database error" });
-    }
-});
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
 });

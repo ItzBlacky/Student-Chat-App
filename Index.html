@@ -5,18 +5,37 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <h1>Student Chat App</h1>
+    <h2>Login</h2>
+
+<input type="email" id="emailInput" placeholder="Email">
+<input type="password" id="passwordInput" placeholder="Password">
+
+<button id="loginBtn">Login</button>
+
+<hr>
+   <h1>Student Chat App</h1>
+
+<div id="coursesSection">
+    <h2>Courses</h2>
 
     <input type="text" id="courseInput" placeholder="Enter course name">
     <button id="addCourseBtn">Add Course</button>
 
     <ul id="courseList"></ul>
-    <h2>Messages</h2>
+</div>
+
+<div id="chatSection">
+
+    <h2 id="activeCourseTitle">Messages</h2>
 
     <ul id="messageList"></ul>
 
     <input type="text" id="messageInput" placeholder="Type message">
     <button id="sendMessageBtn">Send</button>
+
+</div>
+<button id="logoutBtn">Logout</button>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

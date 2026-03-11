@@ -4,3 +4,7 @@ body {
     color: white;
     text-align: center;
 }
+#messageList {
+    height: 300px;
+    overflow-y: auto;
+}
