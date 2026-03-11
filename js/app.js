@@ -17,6 +17,7 @@ const emailInput = document.getElementById("emailInput");
 const passwordInput = document.getElementById("passwordInput");
 const loginBtn = document.getElementById("loginBtn");
 
+if (loginBtn) {
 loginBtn.onclick = async () => {
 
     const email = emailInput.value;
@@ -37,7 +38,6 @@ loginBtn.onclick = async () => {
             password
         })
     });
-
     const data = await response.json();
 
     if (data.token) {
@@ -55,6 +55,7 @@ loginBtn.onclick = async () => {
     }
 
 };
+}
 document.getElementById("logoutBtn").onclick = () => {
 
     localStorage.removeItem("token");
@@ -97,13 +98,17 @@ function renderCourses(courses) {
 
         li.onclick = () => {
 
-            selectedCourseId = course.id;
+    selectedCourseId = course.id;
 
-            fetchMessages(course.id);
+    document.getElementById("activeCourseTitle").innerText =
+        "Messages - " + course.name;
 
-            socket.emit("joinCourse", course.id);
+    fetchMessages(course.id);
+    fetchNotes(course.id);
 
-        };
+    socket.emit("joinCourse", course.id);
+
+};
 
         const deleteBtn = document.createElement("button");
 
@@ -248,5 +253,88 @@ socket.on("newMessage", (message) => {
 // =======================
 // LOAD COURSES
 // =======================
+const noteTitle = document.getElementById("noteTitle");
+const noteFile = document.getElementById("noteFile");
+const uploadNoteBtn = document.getElementById("uploadNoteBtn");
+const notesList = document.getElementById("notesList");
 
+uploadNoteBtn.onclick = async () => {
+
+    if (!selectedCourseId) {
+        alert("Select course first");
+        return;
+    }
+
+    const formData = new FormData();
+
+    formData.append("title", noteTitle.value);
+    formData.append("file", noteFile.files[0]);
+
+    const response = await fetch(
+        `http://localhost:5000/courses/${selectedCourseId}/notes`,
+        {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${authToken}`
+            },
+            body: formData
+        }
+    );
+
+    const data = await response.json();
+
+    console.log(data);
+
+};
+
+// =======================
+// FETCH NOTES
+// =======================
+
+async function fetchNotes(courseId) {
+
+    const response = await fetch(
+        `http://localhost:5000/courses/${courseId}/notes`,
+        {
+            headers: {
+                "Authorization": `Bearer ${authToken}`
+            }
+        }
+    );
+
+    const notes = await response.json();
+
+    renderNotes(notes);
+
+}
+
+
+// =======================
+// RENDER NOTES
+// =======================
+
+function renderNotes(notes) {
+
+    const notesList = document.getElementById("notesList");
+
+    notesList.innerHTML = "";
+
+    notes.forEach(note => {
+
+        const li = document.createElement("li");
+
+        const link = document.createElement("a");
+
+        link.href = `http://localhost:5000/uploads/${note.file_path}`;
+        link.target = "_blank";
+
+        link.textContent = note.title;
+
+        li.appendChild(link);
+
+        notesList.appendChild(li);
+
+    });
+
+}
 fetchCourses();
