@@ -10,6 +10,10 @@ function authenticateToken(req, res, next) {
         return res.status(401).json({ error: "Access denied" });
     }
 
+    if (!authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Invalid token format" });
+    }
+
     const token = authHeader.split(" ")[1];
 
     if (!token) {
@@ -26,7 +30,9 @@ function authenticateToken(req, res, next) {
 
     } catch (error) {
 
-        return res.status(403).json({ error: "Invalid token" });
+        console.error("JWT Error:", error.message);
+
+        return res.status(401).json({ error: "Invalid token" });
 
     }
 

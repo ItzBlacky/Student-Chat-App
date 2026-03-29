@@ -1,64 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Chat App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="CSS/style.css">
+</head>
 <body>
+    <div class="page-shell">
+        <div class="orb orb-a"></div>
+        <div class="orb orb-b"></div>
+        <div class="grid-glow"></div>
 
-<h1>Student Chat App</h1>
-<div class="login-panel">
+        <section class="login-panel">
+            <div class="auth-hero">
+                <p class="eyebrow">Campus Collaboration Hub</p>
+                <h1>One workspace for study groups, class updates, and assignment flow.</h1>
+                <p class="hero-copy">
+                    Bring conversations, notes, submissions, and live course presence into one focused space.
+                    Built for students, useful for teachers, and fast enough for everyday use.
+                </p>
 
-    <input type="email" id="emailInput" placeholder="Email">
-    <input type="password" id="passwordInput" placeholder="Password">
+                <div class="hero-stats">
+                    <div class="hero-stat">
+                        <strong>Live</strong>
+                        <span>presence and typing updates</span>
+                    </div>
+                    <div class="hero-stat">
+                        <strong>Shared</strong>
+                        <span>materials and course files</span>
+                    </div>
+                    <div class="hero-stat">
+                        <strong>Structured</strong>
+                        <span>assignments for students and teachers</span>
+                    </div>
+                </div>
+            </div>
 
-    <button id="loginBtn">Login</button>
-    <button id="logoutBtn">Logout</button>
+            <div class="auth-card">
+                <div class="brand-row">
+                    <div class="brand-mark">SC</div>
+                    <div>
+                        <p class="brand-kicker">Student Chat App</p>
+                        <h2 id="brandRole">Sign in to continue</h2>
+                    </div>
+                </div>
 
-</div>
-<div class="app-container">
+                <div class="auth-inputs">
+                    <label class="field">
+                        <span>Username</span>
+                        <input type="text" id="usernameInput" placeholder="For registration">
+                    </label>
 
-    <!-- COURSES PANEL -->
-    <div class="courses-panel">
+                    <label class="field">
+                        <span>Email</span>
+                        <input type="email" id="emailInput" placeholder="you@example.com">
+                    </label>
 
-        <h2>Courses</h2>
+                    <label class="field">
+                        <span>Password</span>
+                        <input type="password" id="passwordInput" placeholder="Enter password">
+                    </label>
 
-        <input type="text" id="courseInput" placeholder="Course name">
-        <button id="addCourseBtn">Add</button>
+                    <label class="field">
+                        <span>Role</span>
+                        <select id="roleInput">
+                            <option value="student">Student</option>
+                            <option value="teacher">Teacher</option>
+                        </select>
+                    </label>
+                </div>
 
-        <ul id="courseList"></ul>
+                <div class="auth-actions">
+                    <button id="loginBtn" class="primary-btn">Login</button>
+                    <button id="registerBtn" class="secondary-btn">Register</button>
+                </div>
 
+                <div id="authMessage" class="auth-message" data-type="info"></div>
+            </div>
+        </section>
+
+        <main class="app-container hidden">
+            <header class="app-header">
+                <div class="app-title-group">
+                    <p class="eyebrow">Focused Workspace</p>
+                    <h2>Student Chat Dashboard</h2>
+                </div>
+
+                <div class="app-header-actions">
+                    <div id="sessionBadge" class="session-badge">Authenticated</div>
+                    <div id="userMeta" class="user-meta">Signed in</div>
+                    <button id="logoutBtn" class="ghost-btn">Logout</button>
+                </div>
+            </header>
+
+            <div class="app-body">
+                <aside class="courses-panel panel">
+                    <div class="panel-head">
+                        <div>
+                            <p class="panel-label">Your Courses</p>
+                            <h3>Joined spaces</h3>
+                        </div>
+                        <span id="courseCount" class="count-pill">0 joined</span>
+                    </div>
+
+                    <div class="course-create">
+                        <input type="text" id="courseInput" placeholder="Create a new course">
+                        <button id="addCourseBtn" class="primary-btn">Add Course</button>
+                    </div>
+
+                    <ul id="courseList" class="course-list"></ul>
+                </aside>
+
+                <section class="workspace">
+                    <div id="emptyWorkspace" class="empty-workspace panel">
+                        <p class="panel-label">Ready When You Are</p>
+                        <h3>Pick a course to open the live workspace.</h3>
+                        <p>
+                            Once you choose a course, chat, materials, assignments, and live member activity
+                            will appear here.
+                        </p>
+                    </div>
+
+                    <div class="course-content-panel panel">
+                        <div class="course-header">
+                            <div>
+                                <p class="panel-label">Active Course</p>
+                                <h2 id="activeCourseTitle">Select a Course</h2>
+                                <p id="workspaceSubtitle" class="workspace-subtitle">
+                                    Live chat, materials, and assignment activity.
+                                </p>
+                            </div>
+                            <div id="onlineUsers" class="online-users">No one online yet</div>
+                        </div>
+
+                        <div class="course-tabs">
+                            <button class="tab-btn active" data-tab="chat">Chat</button>
+                            <button class="tab-btn" data-tab="materials">Materials</button>
+                            <button class="tab-btn" data-tab="assignments">Assignments</button>
+                        </div>
+
+                        <div class="tab-content">
+                            <div id="chat-tab" class="tab-pane active">
+                                <div class="chat-panel">
+                                    <div id="typingIndicator" class="typing-indicator"></div>
+                                    <ul id="messageList" class="message-list"></ul>
+                                </div>
+
+                                <div class="message-input">
+                                    <input type="text" id="messageInput" placeholder="Write a message to the course">
+                                    <button id="sendMessageBtn" class="primary-btn">Send</button>
+                                </div>
+                            </div>
+
+                            <div id="materials-tab" class="tab-pane">
+                                <div class="section-head">
+                                    <div>
+                                        <p class="panel-label">Materials</p>
+                                        <h3>Shared files and notes</h3>
+                                    </div>
+                                </div>
+
+                                <div class="upload-section">
+                                    <input type="text" id="noteTitle" placeholder="Note title">
+                                    <input type="file" id="noteFile">
+                                    <button id="uploadNoteBtn" class="secondary-btn">Upload Material</button>
+                                </div>
+
+                                <ul id="notesList" class="notes-list"></ul>
+                            </div>
+
+                            <div id="assignments-tab" class="tab-pane">
+                                <div class="section-head">
+                                    <div>
+                                        <p class="panel-label">Assignments</p>
+                                        <h3>Track work and submissions</h3>
+                                    </div>
+                                </div>
+
+                                <div class="assignment-list" id="assignmentList"></div>
+
+                                <div class="create-assignment" id="createAssignmentSection">
+                                    <div class="section-head compact">
+                                        <div>
+                                            <p class="panel-label">Teacher Tools</p>
+                                            <h3>Create a new assignment</h3>
+                                        </div>
+                                    </div>
+
+                                    <input type="text" id="assignmentTitle" placeholder="Assignment title">
+                                    <textarea id="assignmentDescription" placeholder="Description"></textarea>
+                                    <input type="date" id="assignmentDueDate">
+                                    <button id="createAssignmentBtn" class="primary-btn">Create Assignment</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <aside class="discover-panel panel">
+                    <div class="panel-head">
+                        <div>
+                            <p class="panel-label">Discover</p>
+                            <h3>Explore more courses</h3>
+                        </div>
+                        <span id="discoverCount" class="count-pill">0 available</span>
+                    </div>
+
+                    <ul id="discoverList" class="discover-list"></ul>
+                </aside>
+            </div>
+        </main>
     </div>
 
-
-    <!-- CHAT PANEL -->
-    <div class="chat-panel">
-
-        <h2 id="activeCourseTitle">Messages</h2>
-
-        <ul id="messageList"></ul>
-
-        <div class="message-input">
-
-            <input type="text" id="messageInput" placeholder="Type message">
-            <button id="sendMessageBtn">Send</button>
-
-        </div>
-
-    </div>
-
-
-    <!-- NOTES PANEL -->
-    <div class="notes-panel">
-
-        <h2>Notes</h2>
-
-        <input type="text" id="noteTitle" placeholder="Note title">
-        <input type="file" id="noteFile">
-
-        <button id="uploadNoteBtn">Upload</button>
-
-        <ul id="notesList"></ul>
-
-    </div>
-
-</div>
-
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script src="js/app.js"></script>
-
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="js/app.js"></script>
 </body>
+</html>
