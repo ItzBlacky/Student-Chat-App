@@ -1,8 +1,9 @@
 const jwt = require("jsonwebtoken");
+const pool = require("../db");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
 
     const authHeader = req.headers["authorization"];
 
@@ -22,9 +23,18 @@ function authenticateToken(req, res, next) {
 
     try {
 
-        const user = jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, JWT_SECRET);
 
-        req.user = user;
+        const [rows] = await pool.query(
+            "SELECT id, username, email FROM users WHERE id = ?",
+            [decoded.id]
+        );
+
+        if (rows.length === 0) {
+            return res.status(401).json({ error: "User not found" });
+        }
+
+        req.user = rows[0];
 
         next();
 

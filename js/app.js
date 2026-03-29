@@ -3,6 +3,8 @@ const socket = io();
 let authToken = localStorage.getItem("token") || null;
 let currentUser = null;
 let selectedCourseId = null;
+let selectedCourse = null;
+let selectedCourseMembers = [];
 
 const COURSE_API = "/courses";
 const MESSAGE_API = "/messages";
@@ -21,7 +23,6 @@ const sendMessageBtn = document.getElementById("sendMessageBtn");
 const usernameInput = document.getElementById("usernameInput");
 const emailInput = document.getElementById("emailInput");
 const passwordInput = document.getElementById("passwordInput");
-const roleInput = document.getElementById("roleInput");
 const loginBtn = document.getElementById("loginBtn");
 const registerBtn = document.getElementById("registerBtn");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -49,6 +50,8 @@ const uploadNoteBtn = document.getElementById("uploadNoteBtn");
 const notesList = document.getElementById("notesList");
 
 const assignmentList = document.getElementById("assignmentList");
+const courseAdminSection = document.getElementById("courseAdminSection");
+const courseMembersList = document.getElementById("courseMembersList");
 const createAssignmentSection = document.getElementById("createAssignmentSection");
 const createAssignmentBtn = document.getElementById("createAssignmentBtn");
 const assignmentTitleInput = document.getElementById("assignmentTitle");
@@ -64,6 +67,11 @@ tabBtns.forEach((btn) => {
 
         btn.classList.add("active");
         document.getElementById(`${tabName}-tab`).classList.add("active");
+
+        if (tabName === "assignments") {
+            showTeacherControls();
+            showCourseAdminControls();
+        }
     });
 });
 
@@ -106,13 +114,18 @@ async function safeFetch(url, options = {}) {
 }
 
 function updateUserChrome() {
+    const selectedCourseRole = String(selectedCourse?.course_role || "").toLowerCase();
+    const roleLabel = selectedCourseRole
+        ? `${selectedCourseRole} in this course`
+        : "member";
+
     if (sessionBadge) {
         sessionBadge.textContent = authToken ? (currentUser ? "Authenticated" : "Reconnecting") : "Guest";
     }
 
     if (userMeta) {
         userMeta.textContent = currentUser
-            ? `${currentUser.username} - ${currentUser.role}`
+            ? `${currentUser.username} - ${roleLabel || "member"}`
             : authToken
                 ? "Restoring your workspace..."
                 : "Sign in to open your dashboard";
@@ -144,9 +157,32 @@ function setTypingIndicator(text) {
     typingIndicator.textContent = text;
 }
 
-function showTeacherControls(isTeacher) {
+function getSelectedCourseRole() {
+    return String(selectedCourse?.course_role || "").toLowerCase();
+}
+
+function canCreateAssignments() {
+    return ["admin", "teacher"].includes(getSelectedCourseRole());
+}
+
+function canManageRoles() {
+    return getSelectedCourseRole() === "admin";
+}
+
+function canSubmitAssignments() {
+    return getSelectedCourseRole() === "student";
+}
+
+function showTeacherControls(isTeacher = canCreateAssignments()) {
     if (!createAssignmentSection) return;
     createAssignmentSection.classList.toggle("hidden", !isTeacher);
+    createAssignmentSection.style.display = isTeacher ? "grid" : "none";
+}
+
+function showCourseAdminControls(isAdmin = canManageRoles()) {
+    if (!courseAdminSection) return;
+    courseAdminSection.classList.toggle("hidden", !isAdmin);
+    courseAdminSection.style.display = isAdmin ? "grid" : "none";
 }
 
 function setWorkspaceState(hasCourse, courseName = "") {
@@ -171,12 +207,20 @@ function setWorkspaceState(hasCourse, courseName = "") {
 
 function clearWorkspace() {
     selectedCourseId = null;
+    selectedCourse = null;
+    selectedCourseMembers = [];
     messageList.innerHTML = "";
     notesList.innerHTML = "";
     assignmentList.innerHTML = "";
+    if (courseMembersList) {
+        courseMembersList.innerHTML = "";
+    }
     renderOnlineUsers([]);
     setTypingIndicator("");
     setWorkspaceState(false);
+    showTeacherControls(false);
+    showCourseAdminControls(false);
+    updateUserChrome();
 }
 
 function handleUnauthorized() {
@@ -210,14 +254,13 @@ function setAuthState(loggedIn) {
         ensureSocketAuthenticated();
         fetchCourses();
         fetchDiscoverCourses();
-        showTeacherControls(currentUser?.role === "teacher");
+        showTeacherControls();
+        showCourseAdminControls();
         setWorkspaceState(!!selectedCourseId, activeCourseTitle?.textContent || "");
     } else {
         courseList.innerHTML = "";
         discoverList.innerHTML = "";
         clearWorkspace();
-        updateUserChrome();
-        showTeacherControls(false);
     }
 }
 
@@ -283,27 +326,37 @@ function openCourse(course) {
     }
 
     selectedCourseId = course.id;
+    selectedCourse = course;
     setWorkspaceState(true, course.name);
+    updateUserChrome();
+    showTeacherControls();
+    showCourseAdminControls();
     activeCourseTitle.textContent = course.name;
-    workspaceSubtitle.textContent = course.is_owner
-        ? "You own this course. Manage discussion, materials, and assignments from one place."
-        : "Follow live discussion, shared materials, and assignment updates here.";
+    const courseRole = String(course.course_role || "student").toLowerCase();
+    workspaceSubtitle.textContent = courseRole === "admin"
+        ? "You are the course admin. Manage roles, assignments, and activity from here."
+        : courseRole === "teacher"
+            ? "You are a course teacher. Create assignments and review student submissions here."
+            : "You are a student in this course. Follow updates and submit your assignment work here.";
 
     socket.emit("joinCourse", course.id);
 
     fetchMessages(course.id);
     fetchNotes(course.id);
     fetchAssignments(course.id);
+    fetchCourseMembers(course.id);
     renderCourses(window.__joinedCourses || []);
 }
 
 socket.on("authenticated", ({ user }) => {
     currentUser = user;
     updateUserChrome();
-    showTeacherControls(user.role === "teacher");
+    showTeacherControls();
+    showCourseAdminControls();
 
     if (selectedCourseId) {
         fetchAssignments(selectedCourseId);
+        fetchCourseMembers(selectedCourseId);
     }
 });
 
@@ -374,7 +427,6 @@ if (registerBtn) {
         const username = usernameInput.value.trim();
         const email = emailInput.value.trim();
         const password = passwordInput.value;
-        const role = roleInput.value;
 
         if (!username || !email || !password) {
             showAuthMessage("Username, email, and password are required.", "error");
@@ -385,7 +437,7 @@ if (registerBtn) {
             const response = await fetch("/auth/register", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, email, password, role }),
+                body: JSON.stringify({ username, email, password }),
             });
 
             const data = await response.json();
@@ -416,6 +468,18 @@ async function fetchCourses() {
 
     const data = await response.json();
     window.__joinedCourses = data;
+
+    if (selectedCourseId) {
+        selectedCourse = data.find((course) => course.id === selectedCourseId) || null;
+        if (!selectedCourse) {
+            clearWorkspace();
+        } else {
+            updateUserChrome();
+            showTeacherControls();
+            showCourseAdminControls();
+        }
+    }
+
     renderCourses(data);
 }
 
@@ -456,11 +520,11 @@ function renderCourses(courses) {
 
         const meta = document.createElement("div");
         meta.className = "course-meta";
-        meta.textContent = course.is_owner ? "Teacher-owned space" : "Joined course";
+        meta.textContent = `${String(course.course_role || "student").toLowerCase()} role`;
 
         const badge = document.createElement("span");
         badge.className = "course-badge";
-        badge.textContent = course.is_owner ? "Owner" : "Member";
+        badge.textContent = String(course.course_role || "student").toLowerCase();
 
         main.appendChild(name);
         main.appendChild(meta);
@@ -470,7 +534,8 @@ function renderCourses(courses) {
         const actionBtn = document.createElement("button");
         actionBtn.type = "button";
         actionBtn.className = "course-action-btn";
-        actionBtn.textContent = course.is_owner ? "Delete" : "Leave";
+        const isAdminCourse = String(course.course_role || "").toLowerCase() === "admin";
+        actionBtn.textContent = isAdminCourse ? "Delete" : "Leave";
         actionBtn.addEventListener("click", async (event) => {
             event.stopPropagation();
 
@@ -480,7 +545,7 @@ function renderCourses(courses) {
 
             if (!response.ok) {
                 const data = await response.json().catch(() => ({}));
-                showAuthMessage(data.error || `Failed to ${course.is_owner ? "delete" : "leave"} course`, "error");
+                showAuthMessage(data.error || `Failed to ${isAdminCourse ? "delete" : "leave"} course`, "error");
                 return;
             }
 
@@ -489,7 +554,7 @@ function renderCourses(courses) {
                 clearWorkspace();
             }
 
-            showAuthMessage(course.is_owner ? "Course deleted." : "You left the course.", "success");
+            showAuthMessage(isAdminCourse ? "Course deleted." : "You left the course.", "success");
             fetchCourses();
             fetchDiscoverCourses();
         });
@@ -554,6 +619,100 @@ function renderDiscoverCourses(courses) {
         li.appendChild(shell);
         discoverList.appendChild(li);
     });
+}
+
+async function fetchCourseMembers(courseId) {
+    if (!courseId) return;
+
+    const response = await safeFetch(`${COURSE_API}/${courseId}/members`);
+    if (!response.ok) return;
+
+    const members = await response.json();
+    selectedCourseMembers = members;
+    renderCourseMembers(members);
+}
+
+function renderCourseMembers(members) {
+    if (!courseMembersList) return;
+
+    courseMembersList.innerHTML = "";
+
+    if (!canManageRoles()) {
+        showCourseAdminControls(false);
+        return;
+    }
+
+    showCourseAdminControls(true);
+
+    members.forEach((member) => {
+        const item = document.createElement("div");
+        item.className = "course-member-item";
+
+        const main = document.createElement("div");
+        main.className = "course-member-main";
+
+        const name = document.createElement("div");
+        name.className = "course-member-name";
+        name.textContent = member.username;
+
+        const meta = document.createElement("div");
+        meta.className = "course-member-meta";
+        meta.textContent = `${member.email} - ${String(member.role || "student").toLowerCase()}`;
+
+        main.appendChild(name);
+        main.appendChild(meta);
+        item.appendChild(main);
+
+        if (String(member.role || "").toLowerCase() === "admin") {
+            const badge = document.createElement("span");
+            badge.className = "course-badge";
+            badge.textContent = "admin";
+            item.appendChild(badge);
+        } else {
+            const actions = document.createElement("div");
+            actions.className = "role-actions";
+
+            const teacherBtn = document.createElement("button");
+            teacherBtn.type = "button";
+            teacherBtn.className = "role-btn";
+            teacherBtn.textContent = "Make Teacher";
+            teacherBtn.disabled = String(member.role || "").toLowerCase() === "teacher";
+            teacherBtn.addEventListener("click", () => updateCourseMemberRole(member.id, "teacher"));
+
+            const studentBtn = document.createElement("button");
+            studentBtn.type = "button";
+            studentBtn.className = "role-btn";
+            studentBtn.textContent = "Make Student";
+            studentBtn.disabled = String(member.role || "").toLowerCase() === "student";
+            studentBtn.addEventListener("click", () => updateCourseMemberRole(member.id, "student"));
+
+            actions.appendChild(teacherBtn);
+            actions.appendChild(studentBtn);
+            item.appendChild(actions);
+        }
+
+        courseMembersList.appendChild(item);
+    });
+}
+
+async function updateCourseMemberRole(userId, role) {
+    if (!selectedCourseId) return;
+
+    const response = await safeFetch(`${COURSE_API}/${selectedCourseId}/members/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+    });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        showAuthMessage(data.error || "Unable to update course role", "error");
+        return;
+    }
+
+    showAuthMessage(`Updated member role to ${role}.`, "success");
+    fetchCourseMembers(selectedCourseId);
+    fetchCourses();
 }
 
 if (addCourseBtn) {
@@ -765,6 +924,8 @@ async function fetchAssignments(courseId) {
 
 function renderAssignments(assignments) {
     assignmentList.innerHTML = "";
+    showTeacherControls();
+    showCourseAdminControls();
 
     if (!assignments.length) {
         const empty = document.createElement("div");
@@ -789,8 +950,8 @@ function renderAssignments(assignments) {
             <p><strong>Due:</strong> ${escapeHtml(dueDate)} <span class="status-chip ${isOverdue ? "overdue" : "active"}">${isOverdue ? "Overdue" : "Active"}</span></p>
             <p><strong>Created by:</strong> ${escapeHtml(assignment.teacher_name)}</p>
             <div class="assignment-actions">
-                <button class="submit-assignment-btn" data-assignment-id="${assignment.id}">Submit Assignment</button>
-                ${currentUser?.role === "teacher" ? `<button class="view-submissions-btn" data-assignment-id="${assignment.id}">View Submissions</button>` : ""}
+                ${canSubmitAssignments() ? `<button class="submit-assignment-btn" data-assignment-id="${assignment.id}">Submit Assignment</button>` : ""}
+                ${canCreateAssignments() ? `<button class="view-submissions-btn" data-assignment-id="${assignment.id}">View Submissions</button>` : ""}
             </div>
             <div class="submission-form hidden" id="submission-form-${assignment.id}">
                 <textarea placeholder="Your submission text" id="submission-text-${assignment.id}"></textarea>
@@ -893,6 +1054,11 @@ if (createAssignmentBtn) {
     createAssignmentBtn.onclick = async () => {
         if (!selectedCourseId) {
             alert("Select a course first");
+            return;
+        }
+
+        if (!canCreateAssignments()) {
+            alert("Only course teachers or admins can create assignments");
             return;
         }
 

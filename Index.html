@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Student Chat App</title>
+    <title>StudyMate</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -44,7 +44,7 @@
                 <div class="brand-row">
                     <div class="brand-mark">SC</div>
                     <div>
-                        <p class="brand-kicker">Student Chat App</p>
+                        <p class="brand-kicker">StudyMate</p>
                         <h2 id="brandRole">Sign in to continue</h2>
                     </div>
                 </div>
@@ -64,14 +64,6 @@
                         <span>Password</span>
                         <input type="password" id="passwordInput" placeholder="Enter password">
                     </label>
-
-                    <label class="field">
-                        <span>Role</span>
-                        <select id="roleInput">
-                            <option value="student">Student</option>
-                            <option value="teacher">Teacher</option>
-                        </select>
-                    </label>
                 </div>
 
                 <div class="auth-actions">
@@ -87,7 +79,7 @@
             <header class="app-header">
                 <div class="app-title-group">
                     <p class="eyebrow">Focused Workspace</p>
-                    <h2>Student Chat Dashboard</h2>
+                    <h2>StudyMate Dashboard</h2>
                 </div>
 
                 <div class="app-header-actions">
@@ -182,6 +174,17 @@
                                 </div>
 
                                 <div class="assignment-list" id="assignmentList"></div>
+
+                                <div class="course-admin-tools hidden" id="courseAdminSection">
+                                    <div class="section-head compact">
+                                        <div>
+                                            <p class="panel-label">Admin Controls</p>
+                                            <h3>Manage course roles</h3>
+                                        </div>
+                                    </div>
+
+                                    <div id="courseMembersList" class="course-members-list"></div>
+                                </div>
 
                                 <div class="create-assignment" id="createAssignmentSection">
                                     <div class="section-head compact">

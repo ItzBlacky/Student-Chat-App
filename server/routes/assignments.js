@@ -5,7 +5,6 @@ const multer = require("multer");
 const pool = require("../db");
 const authenticateToken = require("../middleware/authMiddleware");
 
-// MULTER CONFIG for assignment submissions
 const path = require("path");
 
 const submissionStorage = multer.diskStorage({
@@ -13,11 +12,42 @@ const submissionStorage = multer.diskStorage({
         cb(null, path.join(__dirname, "../uploads"));
     },
     filename: (req, file, cb) => {
-        cb(null, "submission-" + Date.now() + "-" + file.originalname);
+        cb(null, `submission-${Date.now()}-${file.originalname}`);
     }
 });
 
 const uploadSubmission = multer({ storage: submissionStorage });
+
+function normalizeRole(role) {
+    return String(role || "").toLowerCase();
+}
+
+async function getCourseRole(courseId, userId) {
+    const [rows] = await pool.query(
+        `
+        SELECT LOWER(role) AS role
+        FROM course_members
+        WHERE course_id = ? AND user_id = ?
+        `,
+        [courseId, userId]
+    );
+
+    return rows[0]?.role || null;
+}
+
+async function getAssignmentCourseRole(assignmentId, userId) {
+    const [rows] = await pool.query(
+        `
+        SELECT assignments.course_id, LOWER(course_members.role) AS role
+        FROM assignments
+        JOIN course_members ON assignments.course_id = course_members.course_id
+        WHERE assignments.id = ? AND course_members.user_id = ?
+        `,
+        [assignmentId, userId]
+    );
+
+    return rows[0] || null;
+}
 
 // =======================
 // GET ASSIGNMENTS FOR A COURSE
@@ -26,22 +56,20 @@ router.get("/:courseId", authenticateToken, async (req, res) => {
     const courseId = req.params.courseId;
 
     try {
-        // Check if user is a member of the course
-        const [member] = await pool.query(
-            "SELECT * FROM course_members WHERE course_id = ? AND user_id = ?",
-            [courseId, req.user.id]
-        );
+        const courseRole = await getCourseRole(courseId, req.user.id);
 
-        if (member.length === 0) {
+        if (!courseRole) {
             return res.status(403).json({ error: "You are not a member of this course" });
         }
 
         const [assignments] = await pool.query(
-            `SELECT assignments.*, users.username as teacher_name
-             FROM assignments
-             JOIN users ON assignments.user_id = users.id
-             WHERE assignments.course_id = ?
-             ORDER BY assignments.created_at DESC`,
+            `
+            SELECT assignments.*, users.username AS teacher_name
+            FROM assignments
+            JOIN users ON assignments.user_id = users.id
+            WHERE assignments.course_id = ?
+            ORDER BY assignments.created_at DESC
+            `,
             [courseId]
         );
 
@@ -64,19 +92,14 @@ router.post("/:courseId", authenticateToken, async (req, res) => {
     }
 
     try {
-        // Check if user is a teacher
-        if (req.user.role !== 'teacher') {
-            return res.status(403).json({ error: "Only teachers can create assignments" });
+        const courseRole = await getCourseRole(courseId, req.user.id);
+
+        if (!courseRole) {
+            return res.status(403).json({ error: "You are not a member of this course" });
         }
 
-        // Check if user is a member of the course
-        const [member] = await pool.query(
-            "SELECT * FROM course_members WHERE course_id = ? AND user_id = ?",
-            [courseId, req.user.id]
-        );
-
-        if (member.length === 0) {
-            return res.status(403).json({ error: "You are not a member of this course" });
+        if (!["admin", "teacher"].includes(normalizeRole(courseRole))) {
+            return res.status(403).json({ error: "Only course teachers or admins can create assignments" });
         }
 
         const [result] = await pool.query(
@@ -85,10 +108,12 @@ router.post("/:courseId", authenticateToken, async (req, res) => {
         );
 
         const [newAssignment] = await pool.query(
-            `SELECT assignments.*, users.username as teacher_name
-             FROM assignments
-             JOIN users ON assignments.user_id = users.id
-             WHERE assignments.id = ?`,
+            `
+            SELECT assignments.*, users.username AS teacher_name
+            FROM assignments
+            JOIN users ON assignments.user_id = users.id
+            WHERE assignments.id = ?
+            `,
             [result.insertId]
         );
 
@@ -107,35 +132,29 @@ router.post("/:assignmentId/submit", authenticateToken, uploadSubmission.single(
     const { submissionText } = req.body;
 
     try {
-        // Check if assignment exists and user is member of the course
-        const [assignment] = await pool.query(
-            `SELECT assignments.*, course_members.user_id as member_id
-             FROM assignments
-             JOIN course_members ON assignments.course_id = course_members.course_id
-             WHERE assignments.id = ? AND course_members.user_id = ?`,
-            [assignmentId, req.user.id]
-        );
+        const assignmentMembership = await getAssignmentCourseRole(assignmentId, req.user.id);
 
-        if (assignment.length === 0) {
+        if (!assignmentMembership) {
             return res.status(403).json({ error: "Assignment not found or you are not a member of this course" });
+        }
+
+        if (assignmentMembership.role !== "student") {
+            return res.status(403).json({ error: "Only students can submit assignments" });
         }
 
         const filePath = req.file ? req.file.filename : null;
 
-        // Check if user already submitted
         const [existing] = await pool.query(
             "SELECT * FROM assignment_submissions WHERE assignment_id = ? AND user_id = ?",
             [assignmentId, req.user.id]
         );
 
         if (existing.length > 0) {
-            // Update existing submission
             await pool.query(
                 "UPDATE assignment_submissions SET submission_text = ?, file_path = ?, submitted_at = CURRENT_TIMESTAMP WHERE id = ?",
                 [submissionText || "", filePath, existing[0].id]
             );
         } else {
-            // Create new submission
             await pool.query(
                 "INSERT INTO assignment_submissions (assignment_id, user_id, submission_text, file_path) VALUES (?, ?, ?, ?)",
                 [assignmentId, req.user.id, submissionText || "", filePath]
@@ -150,28 +169,30 @@ router.post("/:assignmentId/submit", authenticateToken, uploadSubmission.single(
 });
 
 // =======================
-// GET SUBMISSIONS FOR AN ASSIGNMENT (for teachers)
+// GET SUBMISSIONS FOR AN ASSIGNMENT
 // =======================
 router.get("/:assignmentId/submissions", authenticateToken, async (req, res) => {
     const assignmentId = req.params.assignmentId;
 
     try {
-        // Check if user created the assignment or is a teacher
-        const [assignment] = await pool.query(
-            "SELECT * FROM assignments WHERE id = ? AND user_id = ?",
-            [assignmentId, req.user.id]
-        );
+        const assignmentMembership = await getAssignmentCourseRole(assignmentId, req.user.id);
 
-        if (assignment.length === 0) {
-            return res.status(403).json({ error: "You can only view submissions for assignments you created" });
+        if (!assignmentMembership) {
+            return res.status(403).json({ error: "Assignment not found or you are not a member of this course" });
+        }
+
+        if (!["admin", "teacher"].includes(assignmentMembership.role)) {
+            return res.status(403).json({ error: "Only course teachers or admins can view submissions" });
         }
 
         const [submissions] = await pool.query(
-            `SELECT assignment_submissions.*, users.username, users.email
-             FROM assignment_submissions
-             JOIN users ON assignment_submissions.user_id = users.id
-             WHERE assignment_submissions.assignment_id = ?
-             ORDER BY assignment_submissions.submitted_at DESC`,
+            `
+            SELECT assignment_submissions.*, users.username, users.email
+            FROM assignment_submissions
+            JOIN users ON assignment_submissions.user_id = users.id
+            WHERE assignment_submissions.assignment_id = ?
+            ORDER BY assignment_submissions.submitted_at DESC
+            `,
             [assignmentId]
         );
 

@@ -12,7 +12,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 // =======================
 router.post("/register", async (req, res) => {
 
-    const { username, email, password, role } = req.body;
+    const { username, email, password } = req.body;
 
     if (!username || !email || !password) {
         return res.status(400).json({ error: "All fields required" });
@@ -28,16 +28,13 @@ router.post("/register", async (req, res) => {
         return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
-    const validRoles = ['student', 'teacher'];
-    const userRole = role && validRoles.includes(role) ? role : 'student';
-
     try {
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
         await pool.query(
-            "INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)",
-            [username, email, hashedPassword, userRole]
+            "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+            [username, email, hashedPassword]
         );
 
         res.json({ message: "User registered successfully" });
@@ -92,8 +89,7 @@ router.post("/login", async (req, res) => {
             {
                 id: user.id,
                 username: user.username,
-                email: user.email,
-                role: user.role
+                email: user.email
             },
             JWT_SECRET,
             { expiresIn: "1d" }
@@ -104,8 +100,7 @@ router.post("/login", async (req, res) => {
             user: {
                 id: user.id,
                 username: user.username,
-                email: user.email,
-                role: user.role
+                email: user.email
             }
         });
 

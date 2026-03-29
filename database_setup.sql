@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
-    role ENUM('student', 'teacher') DEFAULT 'student',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -28,6 +27,7 @@ CREATE TABLE IF NOT EXISTS course_members (
     id INT AUTO_INCREMENT PRIMARY KEY,
     course_id INT NOT NULL,
     user_id INT NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'student',
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

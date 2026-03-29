@@ -6,6 +6,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
 const jwt = require("jsonwebtoken");
+const pool = require("./db");
 
 const authRoutes = require("./routes/auth");
 const notesRoutes = require("./routes/notes");
@@ -57,11 +58,21 @@ io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
   // Authenticate socket if token is provided
-  socket.on("authenticate", (token) => {
+  socket.on("authenticate", async (token) => {
     try {
-      const user = jwt.verify(token, JWT_SECRET);
-      socket.user = user;
-      socket.emit("authenticated", { user });
+      const decoded = jwt.verify(token, JWT_SECRET);
+      const [rows] = await pool.query(
+        "SELECT id, username, email FROM users WHERE id = ?",
+        [decoded.id]
+      );
+
+      if (rows.length === 0) {
+        socket.emit("unauthorized", { error: "User not found" });
+        return;
+      }
+
+      socket.user = rows[0];
+      socket.emit("authenticated", { user: rows[0] });
     } catch (err) {
       console.warn("Socket auth failed", err.message);
       socket.emit("unauthorized", { error: "Invalid token" });
@@ -152,4 +163,15 @@ function startServer(initialPort, maxAttempts = 10) {
   tryListen();
 }
 
-startServer(PORT);
+async function initializeServer() {
+  try {
+    if (typeof pool.runMigrations === "function") {
+      await pool.runMigrations();
+    }
+    startServer(PORT);
+  } catch (error) {
+    console.error("Startup migration failed:", error);
+  }
+}
+
+initializeServer();
