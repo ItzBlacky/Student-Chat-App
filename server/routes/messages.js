@@ -5,15 +5,23 @@ const pool = require("../db");
 const authenticateToken = require("../middleware/authMiddleware");
 
 
+// =======================
 // GET MESSAGES
-router.get("/:id/messages", authenticateToken, async (req, res) => {
+// =======================
+router.get("/:courseId", authenticateToken, async (req, res) => {
 
-    const courseId = req.params.id;
+    const courseId = req.params.courseId;
 
     try {
 
         const [rows] = await pool.query(
-            "SELECT * FROM messages WHERE course_id = ? ORDER BY id ASC",
+            `
+            SELECT messages.*, users.email, users.username
+            FROM messages
+            JOIN users ON messages.user_id = users.id
+            WHERE messages.course_id = ?
+            ORDER BY messages.id ASC
+            `,
             [courseId]
         );
 
@@ -29,10 +37,12 @@ router.get("/:id/messages", authenticateToken, async (req, res) => {
 });
 
 
-// POST MESSAGE
-router.post("/:id/messages", authenticateToken, async (req, res) => {
+// =======================
+// SEND MESSAGE
+// =======================
+router.post("/:courseId", authenticateToken, async (req, res) => {
 
-    const courseId = req.params.id;
+    const courseId = req.params.courseId;
     const { content } = req.body;
 
     if (!content || content.trim() === "") {
@@ -41,13 +51,19 @@ router.post("/:id/messages", authenticateToken, async (req, res) => {
 
     try {
 
-        const [course] = await pool.query(
-            "SELECT id FROM courses WHERE id = ?",
-            [courseId]
+        // 🔥 CHECK MEMBERSHIP
+        const [member] = await pool.query(
+            `
+            SELECT * FROM course_members
+            WHERE course_id = ? AND user_id = ?
+            `,
+            [courseId, req.user.id]
         );
 
-        if (course.length === 0) {
-            return res.status(404).json({ error: "Course not found" });
+        if (member.length === 0) {
+            return res.status(403).json({
+                error: "You are not a member of this course"
+            });
         }
 
         const [result] = await pool.query(
@@ -61,7 +77,10 @@ router.post("/:id/messages", authenticateToken, async (req, res) => {
             id: result.insertId,
             courseId,
             content,
-            userId: req.user.id
+            userId: req.user.id,
+            email: req.user.email,
+            username: req.user.username,
+            created_at: new Date().toISOString()
         };
 
         io.to(`course_${courseId}`).emit("newMessage", message);

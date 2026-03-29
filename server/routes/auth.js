@@ -6,40 +6,49 @@ const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
+
+// =======================
 // REGISTER
+// =======================
 router.post("/register", async (req, res) => {
 
-    const { username, email, password } = req.body;
+    const { username, email, password, role } = req.body;
 
     if (!username || !email || !password) {
         return res.status(400).json({ error: "All fields required" });
+    }
+
+    const emailRegex = /\S+@\S+\.\S+/;
+
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: "Invalid email format" });
     }
 
     if (password.length < 6) {
         return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
+    const validRoles = ['student', 'teacher'];
+    const userRole = role && validRoles.includes(role) ? role : 'student';
+
     try {
-
-        const [existing] = await pool.query(
-            "SELECT id FROM users WHERE email = ?",
-            [email]
-        );
-
-        if (existing.length > 0) {
-            return res.status(400).json({ error: "Email already registered" });
-        }
 
         const hashedPassword = await bcrypt.hash(password, 10);
 
         await pool.query(
-            "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
-            [username, email, hashedPassword]
+            "INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)",
+            [username, email, hashedPassword, userRole]
         );
 
         res.json({ message: "User registered successfully" });
 
     } catch (error) {
+
+        if (error.code === "ER_DUP_ENTRY") {
+            return res.status(400).json({
+                error: "Email already registered"
+            });
+        }
 
         console.error(error);
         res.status(500).json({ error: "Registration failed" });
@@ -49,7 +58,9 @@ router.post("/register", async (req, res) => {
 });
 
 
+// =======================
 // LOGIN
+// =======================
 router.post("/login", async (req, res) => {
 
     const { email, password } = req.body;
@@ -78,7 +89,12 @@ router.post("/login", async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: user.id, username: user.username },
+            {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                role: user.role
+            },
             JWT_SECRET,
             { expiresIn: "1d" }
         );
@@ -88,7 +104,8 @@ router.post("/login", async (req, res) => {
             user: {
                 id: user.id,
                 username: user.username,
-                email: user.email
+                email: user.email,
+                role: user.role
             }
         });
 

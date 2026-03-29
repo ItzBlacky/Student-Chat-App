@@ -1,15 +1,17 @@
 require("dotenv").config();
-console.log("JWT_SECRET:", process.env.JWT_SECRET);
 
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
+const path = require("path");
+const jwt = require("jsonwebtoken");
 
 const authRoutes = require("./routes/auth");
 const notesRoutes = require("./routes/notes");
 const coursesRoutes = require("./routes/courses");
 const messagesRoutes = require("./routes/messages");
+const assignmentsRoutes = require("./routes/assignments");
 
 const app = express();
 const server = http.createServer(app);
@@ -20,37 +22,134 @@ const io = new Server(server, {
   }
 });
 
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Track which users are currently online in each course
+const coursePresence = new Map(); // courseId -> Map<socketId, { id, username }>
+
+function emitCoursePresence(courseId) {
+  const users = coursePresence.get(courseId);
+  const list = users ? Array.from(users.values()) : [];
+  io.to(`course_${courseId}`).emit("coursePresence", list);
+}
+
 app.use(cors());
 app.use(express.json());
 
-// allow routes to access socket
+// Serve front-end assets (index.html, js, css)
+app.use(express.static(path.join(__dirname, "..")));
+
+// socket access in routes
 app.set("io", io);
-const path = require("path");
 
+// static uploads
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-// ROUTES
-app.use("/auth", authRoutes);
-app.use("/courses", notesRoutes);
-app.use("/courses", coursesRoutes);
-app.use("/courses", messagesRoutes);
-app.use("/uploads", express.static("uploads"));
-// SOCKET CONNECTION
-io.on("connection", (socket) => {
 
+// ROUTES (clean structure)
+app.use("/auth", authRoutes);
+app.use("/courses", coursesRoutes);
+app.use("/messages", messagesRoutes);
+app.use("/notes", notesRoutes);
+app.use("/assignments", assignmentsRoutes);
+
+// SOCKET
+io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
+  // Authenticate socket if token is provided
+  socket.on("authenticate", (token) => {
+    try {
+      const user = jwt.verify(token, JWT_SECRET);
+      socket.user = user;
+      socket.emit("authenticated", { user });
+    } catch (err) {
+      console.warn("Socket auth failed", err.message);
+      socket.emit("unauthorized", { error: "Invalid token" });
+    }
+  });
+
   socket.on("joinCourse", (courseId) => {
+    if (!socket.user) return;
+
     socket.join(`course_${courseId}`);
+
+    const users = coursePresence.get(courseId) || new Map();
+    users.set(socket.id, { id: socket.user.id, username: socket.user.username });
+    coursePresence.set(courseId, users);
+
+    emitCoursePresence(courseId);
+  });
+
+  socket.on("leaveCourse", (courseId) => {
+    if (!socket.user) return;
+
+    socket.leave(`course_${courseId}`);
+
+    const users = coursePresence.get(courseId);
+    if (users) {
+      users.delete(socket.id);
+      if (users.size === 0) {
+        coursePresence.delete(courseId);
+      } else {
+        coursePresence.set(courseId, users);
+      }
+      emitCoursePresence(courseId);
+    }
+  });
+
+  socket.on("typing", (courseId) => {
+    if (!socket.user) return;
+    socket.to(`course_${courseId}`).emit("typing", {
+      user: {
+        id: socket.user.id,
+        username: socket.user.username
+      }
+    });
   });
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
+
+    // Remove from all course presence lists
+    for (const [courseId, users] of coursePresence) {
+      if (users.has(socket.id)) {
+        users.delete(socket.id);
+        if (users.size === 0) {
+          coursePresence.delete(courseId);
+        } else {
+          coursePresence.set(courseId, users);
+        }
+        emitCoursePresence(courseId);
+      }
+    }
+  });
+});
+
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5000;
+
+function startServer(initialPort, maxAttempts = 10) {
+  let attempt = 0;
+  let port = initialPort;
+
+  const tryListen = () => {
+    attempt += 1;
+    server.listen(port, () => {
+      console.log(`Server running on http://localhost:${port}`);
+    });
+  };
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && attempt < maxAttempts) {
+      const nextPort = port + 1;
+      console.log(`Port ${port} is busy, trying ${nextPort}...`);
+      port = nextPort;
+      server.close(() => tryListen());
+    } else {
+      console.error('Server error:', err);
+    }
   });
 
-});
+  tryListen();
+}
 
-const PORT = process.env.PORT || 5000;
-
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+startServer(PORT);
