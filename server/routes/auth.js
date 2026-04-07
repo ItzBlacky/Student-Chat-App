@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { generateUniqueUserCode } = require("../utils/userCode");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -31,10 +32,11 @@ router.post("/register", async (req, res) => {
     try {
 
         const hashedPassword = await bcrypt.hash(password, 10);
+        const userCode = await generateUniqueUserCode(pool, username);
 
         await pool.query(
-            "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
-            [username, email, hashedPassword]
+            "INSERT INTO users (username, user_code, email, password) VALUES (?, ?, ?, ?)",
+            [username, userCode, email, hashedPassword]
         );
 
         res.json({ message: "User registered successfully" });
@@ -89,7 +91,8 @@ router.post("/login", async (req, res) => {
             {
                 id: user.id,
                 username: user.username,
-                email: user.email
+                email: user.email,
+                user_code: user.user_code
             },
             JWT_SECRET,
             { expiresIn: "1d" }
@@ -100,7 +103,8 @@ router.post("/login", async (req, res) => {
             user: {
                 id: user.id,
                 username: user.username,
-                email: user.email
+                email: user.email,
+                user_code: user.user_code
             }
         });
 

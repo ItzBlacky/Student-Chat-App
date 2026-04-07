@@ -8,6 +8,7 @@ USE student_chat_app;
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(255) NOT NULL UNIQUE,
+    user_code VARCHAR(32) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -81,4 +82,36 @@ CREATE TABLE IF NOT EXISTS assignment_submissions (
     FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE KEY unique_submission (assignment_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS friend_requests (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    pair_key VARCHAR(64) NOT NULL UNIQUE,
+    sender_id INT NOT NULL,
+    receiver_id INT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS private_conversations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_one_id INT NOT NULL,
+    user_two_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_private_conversation (user_one_id, user_two_id),
+    FOREIGN KEY (user_one_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_two_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS private_messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    conversation_id INT NOT NULL,
+    user_id INT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES private_conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

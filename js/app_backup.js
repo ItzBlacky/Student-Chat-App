@@ -774,4 +774,4 @@ if (createAssignmentBtn) {
 // =======================
 // INITIAL LOAD
 // =======================
-setAuthState(!!authToken);
+setAuthState(!!authToken);}

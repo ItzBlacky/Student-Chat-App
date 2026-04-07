@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StudyMate</title>
+    <script>
+        (function () {
+            var savedTheme = localStorage.getItem("theme");
+            if (savedTheme === "dark" || savedTheme === "light") {
+                document.documentElement.setAttribute("data-theme", savedTheme);
+            }
+        })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -82,7 +90,31 @@
                     <h2>StudyMate Dashboard</h2>
                 </div>
 
+                <div class="toolbar-search">
+                    <div class="search-shell">
+                        <div class="search-input-row">
+                            <input type="text" id="globalSearchInput" placeholder="Search courses, friends, or people by name or friend ID">
+                            <button id="executeSearchBtn" class="primary-btn search-execute-btn" type="button">Search</button>
+                        </div>
+                        <div id="searchResults" class="search-results hidden"></div>
+                    </div>
+                    <div class="search-filters">
+                        <button type="button" class="search-filter active" data-filter="all">All</button>
+                        <button type="button" class="search-filter" data-filter="courses">Courses</button>
+                        <button type="button" class="search-filter" data-filter="friends">Friends</button>
+                        <button type="button" class="search-filter" data-filter="people">People</button>
+                    </div>
+                </div>
+
                 <div class="app-header-actions">
+                    <button id="backBtn" class="ghost-btn" type="button">Back</button>
+                    <button id="toolbarHomeBtn" class="ghost-btn" type="button">Home</button>
+                    <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="true">
+                        <span class="theme-toggle-moon" aria-hidden="true">🌙</span>
+                        <span class="theme-toggle-sun" aria-hidden="true">☀</span>
+                        <span class="theme-toggle-thumb" aria-hidden="true"></span>
+                    </button>
+                    <button id="profileBtn" class="secondary-btn" type="button">Profile</button>
                     <div id="sessionBadge" class="session-badge">Authenticated</div>
                     <div id="userMeta" class="user-meta">Signed in</div>
                     <button id="logoutBtn" class="ghost-btn">Logout</button>
@@ -108,16 +140,64 @@
                 </aside>
 
                 <section class="workspace">
-                    <div id="emptyWorkspace" class="empty-workspace panel">
-                        <p class="panel-label">Ready When You Are</p>
-                        <h3>Pick a course to open the live workspace.</h3>
-                        <p>
-                            Once you choose a course, chat, materials, assignments, and live member activity
-                            will appear here.
-                        </p>
+                    <div id="homeWorkspace" class="home-workspace panel">
+                        <div class="home-hero">
+                            <div>
+                                <p class="panel-label">Home</p>
+                                <h3>Friends, requests, and common course connections.</h3>
+                                <p id="friendIdLabel" class="workspace-subtitle">Use the toolbar search to find courses, friends, and people.</p>
+                            </div>
+                        </div>
+
+                        <div class="home-grid">
+                            <section class="home-section">
+                                <div class="section-head compact">
+                                    <div>
+                                        <p class="panel-label">Friend Chats</p>
+                                        <h3>Your friends</h3>
+                                    </div>
+                                    <span id="friendCount" class="count-pill">0 friends</span>
+                                </div>
+                                <ul id="friendList" class="friends-list"></ul>
+                            </section>
+
+                            <section class="home-section">
+                                <div class="section-head compact">
+                                    <div>
+                                        <p class="panel-label">Suggested</p>
+                                        <h3>Recommended from shared courses</h3>
+                                    </div>
+                                </div>
+                                <ul id="recommendationList" class="recommendation-list"></ul>
+                            </section>
+                        </div>
+
+                        <div class="home-grid home-grid-secondary">
+                            <section class="home-section">
+                                <div class="section-head compact">
+                                    <div>
+                                        <p class="panel-label">Incoming</p>
+                                        <h3>Friend requests</h3>
+                                    </div>
+                                    <span id="incomingRequestCount" class="count-pill">0 pending</span>
+                                </div>
+                                <ul id="incomingRequestList" class="friends-list"></ul>
+                            </section>
+
+                            <section class="home-section">
+                                <div class="section-head compact">
+                                    <div>
+                                        <p class="panel-label">Sent</p>
+                                        <h3>Outgoing requests</h3>
+                                    </div>
+                                    <span id="outgoingRequestCount" class="count-pill">0 pending</span>
+                                </div>
+                                <ul id="outgoingRequestList" class="friends-list"></ul>
+                            </section>
+                        </div>
                     </div>
 
-                    <div class="course-content-panel panel">
+                    <div id="courseWorkspace" class="course-content-panel panel">
                         <div class="course-header">
                             <div>
                                 <p class="panel-label">Active Course</p>
@@ -139,6 +219,7 @@
                             <div id="chat-tab" class="tab-pane active">
                                 <div class="chat-panel">
                                     <div id="typingIndicator" class="typing-indicator"></div>
+                                    <button id="loadOlderCourseMessagesBtn" class="mini-btn load-older-btn hidden" type="button">Load older messages</button>
                                     <ul id="messageList" class="message-list"></ul>
                                 </div>
 
@@ -202,6 +283,79 @@
                             </div>
                         </div>
                     </div>
+
+                    <div id="privateWorkspace" class="private-workspace panel">
+                        <div class="course-header">
+                            <div>
+                                <p class="panel-label">Private Chat</p>
+                                <h2 id="activeFriendTitle">Select a friend</h2>
+                                <p id="privateWorkspaceSubtitle" class="workspace-subtitle">
+                                    Personal messages with your friends live here.
+                                </p>
+                            </div>
+                            <div class="private-chat-header-actions">
+                                <div id="privateTypingIndicator" class="online-users">Say hello to start chatting</div>
+                                <button id="viewFriendProfileBtn" class="ghost-btn hidden" type="button">View Profile</button>
+                            </div>
+                        </div>
+
+                        <div class="chat-panel">
+                            <button id="loadOlderPrivateMessagesBtn" class="mini-btn load-older-btn hidden" type="button">Load older messages</button>
+                            <ul id="privateMessageList" class="message-list"></ul>
+                        </div>
+
+                        <div class="message-input">
+                            <input type="text" id="privateMessageInput" placeholder="Write a private message">
+                            <button id="sendPrivateMessageBtn" class="primary-btn">Send</button>
+                        </div>
+                    </div>
+
+                    <div id="profileWorkspace" class="profile-workspace panel">
+                        <div class="course-header">
+                            <div>
+                                <p class="panel-label">Profile</p>
+                                <h2 id="profileTitle">Your profile</h2>
+                                <p class="workspace-subtitle">See your core account details, joined courses, and social stats.</p>
+                            </div>
+                            <div id="profileActions" class="friend-actions"></div>
+                        </div>
+
+                        <div class="profile-grid">
+                            <section class="home-section">
+                                <div id="profileCard" class="profile-card"></div>
+                            </section>
+                            <section class="home-section">
+                                <div class="section-head compact">
+                                    <div>
+                                        <p class="panel-label">Courses</p>
+                                        <h3>Joined courses</h3>
+                                    </div>
+                                </div>
+                                <ul id="profileCourseList" class="friends-list"></ul>
+                            </section>
+                            <section class="home-section">
+                                <div class="section-head compact">
+                                    <div>
+                                        <p class="panel-label">Connections</p>
+                                        <h3 id="profileFriendListTitle">Your friends</h3>
+                                    </div>
+                                </div>
+                                <ul id="profileFriendList" class="friends-list"></ul>
+                            </section>
+                        </div>
+                    </div>
+
+                    <div id="searchWorkspace" class="search-workspace panel">
+                        <div class="course-header">
+                            <div>
+                                <p class="panel-label">Search</p>
+                                <h2 id="searchWorkspaceTitle">Search results</h2>
+                                <p id="searchWorkspaceSubtitle" class="workspace-subtitle">Live matches for your search will appear here.</p>
+                            </div>
+                        </div>
+
+                        <div id="searchWorkspaceContent" class="search-workspace-content"></div>
+                    </div>
                 </section>
 
                 <aside class="discover-panel panel">
@@ -217,6 +371,36 @@
                 </aside>
             </div>
         </main>
+
+        <div id="userSummaryModal" class="user-summary-modal hidden">
+            <div class="user-summary-card">
+                <div class="section-head compact">
+                    <div>
+                        <p class="panel-label">User Info</p>
+                        <h3 id="userSummaryTitle">Profile</h3>
+                    </div>
+                    <button id="closeUserSummaryBtn" class="ghost-btn" type="button">Close</button>
+                </div>
+                <div id="userSummaryContent" class="user-summary-content"></div>
+            </div>
+        </div>
+
+        <div id="deleteFriendModal" class="user-summary-modal hidden">
+            <div class="user-summary-card delete-friend-card">
+                <div class="section-head compact">
+                    <div>
+                        <p class="panel-label">Warning</p>
+                        <h3 id="deleteFriendModalTitle">Remove friend</h3>
+                    </div>
+                    <button id="closeDeleteFriendModalBtn" class="ghost-btn" type="button">Close</button>
+                </div>
+                <div id="deleteFriendModalContent" class="user-summary-content"></div>
+                <div class="friend-actions modal-actions">
+                    <button id="cancelDeleteFriendBtn" class="ghost-btn" type="button">Cancel</button>
+                    <button id="confirmDeleteFriendBtn" class="danger-btn" type="button">Continue</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>

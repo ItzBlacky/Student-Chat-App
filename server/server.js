@@ -13,6 +13,7 @@ const notesRoutes = require("./routes/notes");
 const coursesRoutes = require("./routes/courses");
 const messagesRoutes = require("./routes/messages");
 const assignmentsRoutes = require("./routes/assignments");
+const friendsRoutes = require("./routes/friends");
 
 const app = express();
 const server = http.createServer(app);
@@ -52,6 +53,7 @@ app.use("/courses", coursesRoutes);
 app.use("/messages", messagesRoutes);
 app.use("/notes", notesRoutes);
 app.use("/assignments", assignmentsRoutes);
+app.use("/friends", friendsRoutes);
 
 // SOCKET
 io.on("connection", (socket) => {
@@ -62,7 +64,7 @@ io.on("connection", (socket) => {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       const [rows] = await pool.query(
-        "SELECT id, username, email FROM users WHERE id = ?",
+        "SELECT id, username, email, user_code FROM users WHERE id = ?",
         [decoded.id]
       );
 
@@ -116,6 +118,67 @@ io.on("connection", (socket) => {
         username: socket.user.username
       }
     });
+  });
+
+  socket.on("joinPrivateConversation", async (conversationId) => {
+    if (!socket.user || !conversationId) return;
+
+    try {
+      const [rows] = await pool.query(
+        `
+        SELECT id
+        FROM private_conversations
+        WHERE id = ?
+          AND (user_one_id = ? OR user_two_id = ?)
+        LIMIT 1
+        `,
+        [conversationId, socket.user.id, socket.user.id]
+      );
+
+      if (rows.length === 0) {
+        return;
+      }
+
+      socket.join(`private_${conversationId}`);
+    } catch (error) {
+      console.warn("Private conversation join failed", error.message);
+    }
+  });
+
+  socket.on("leavePrivateConversation", (conversationId) => {
+    if (!socket.user || !conversationId) return;
+    socket.leave(`private_${conversationId}`);
+  });
+
+  socket.on("privateTyping", async ({ conversationId }) => {
+    if (!socket.user || !conversationId) return;
+
+    try {
+      const [rows] = await pool.query(
+        `
+        SELECT id
+        FROM private_conversations
+        WHERE id = ?
+          AND (user_one_id = ? OR user_two_id = ?)
+        LIMIT 1
+        `,
+        [conversationId, socket.user.id, socket.user.id]
+      );
+
+      if (rows.length === 0) {
+        return;
+      }
+
+      socket.to(`private_${conversationId}`).emit("privateTyping", {
+        conversationId,
+        user: {
+          id: socket.user.id,
+          username: socket.user.username
+        }
+      });
+    } catch (error) {
+      console.warn("Private typing emit failed", error.message);
+    }
   });
 
   socket.on("disconnect", () => {
