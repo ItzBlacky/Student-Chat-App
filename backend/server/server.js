@@ -270,7 +270,7 @@ function startServer(initialPort, maxAttempts = 10) {
   const tryListen = () => {
     attempt += 1;
     server.listen(port, () => {
-      console.log(`Server running on http://localhost:${port}`);
+      console.log(`Server running on https://student-chat-application.onrender.com`);
     });
   };
 
