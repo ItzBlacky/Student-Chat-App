@@ -1,121 +1,127 @@
-const mysql = require("mysql2/promise");
-const { generateUniqueUserCode } = require("./utils/userCode");
+const { MongoClient } = require("mongodb");
 
-const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME
-});
+const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
 
-pool.runMigrations = async () => {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS friend_requests (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            pair_key VARCHAR(64) NOT NULL UNIQUE,
-            sender_id INT NOT NULL,
-            receiver_id INT NOT NULL,
-            status VARCHAR(20) NOT NULL DEFAULT 'pending',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    `);
+if (!uri) {
+    throw new Error("MONGO_URI is required");
+}
 
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS private_conversations (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_one_id INT NOT NULL,
-            user_two_id INT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY unique_private_conversation (user_one_id, user_two_id),
-            FOREIGN KEY (user_one_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_two_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    `);
+let clientPromise;
 
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS private_messages (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id INT NOT NULL,
-            user_id INT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES private_conversations(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-    `);
-
-    const [userRoleColumns] = await pool.query(`
-        SELECT COLUMN_NAME
-        FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'users'
-          AND COLUMN_NAME = 'role'
-    `);
-
-    if (userRoleColumns.length > 0) {
-        await pool.query("ALTER TABLE users DROP COLUMN role");
+function getDatabaseName() {
+    if (process.env.MONGO_DB_NAME) {
+        return process.env.MONGO_DB_NAME;
     }
 
-    const [userCodeColumns] = await pool.query(`
-        SELECT COLUMN_NAME
-        FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'users'
-          AND COLUMN_NAME = 'user_code'
-    `);
+    try {
+        const parsed = new URL(uri);
+        const dbName = parsed.pathname.replace(/^\/+/, "");
+        return dbName || "studymate";
+    } catch (error) {
+        return "studymate";
+    }
+}
 
-    if (userCodeColumns.length === 0) {
-        await pool.query(
-            "ALTER TABLE users ADD COLUMN user_code VARCHAR(32) NULL UNIQUE AFTER username"
+function getClient() {
+    if (!clientPromise) {
+        const client = new MongoClient(uri);
+        clientPromise = client.connect();
+    }
+
+    return clientPromise;
+}
+
+async function getDb() {
+    const client = await getClient();
+    return client.db(getDatabaseName());
+}
+
+async function collection(name) {
+    const db = await getDb();
+    return db.collection(name);
+}
+
+async function nextId(name) {
+    const counters = await collection("counters");
+    const result = await counters.findOneAndUpdate(
+        { _id: name },
+        { $inc: { seq: 1 } },
+        { upsert: true, returnDocument: "after" }
+    );
+
+    return result.seq;
+}
+
+async function insertWithId(name, document) {
+    const targetCollection = await collection(name);
+    const id = await nextId(name);
+    const now = new Date();
+    const savedDocument = {
+        id,
+        created_at: now,
+        ...document,
+    };
+
+    await targetCollection.insertOne(savedDocument);
+    return savedDocument;
+}
+
+async function syncCounter(name) {
+    const targetCollection = await collection(name);
+    const counters = await collection("counters");
+    const [maxDocument] = await targetCollection
+        .aggregate([
+            { $group: { _id: null, maxId: { $max: "$id" } } }
+        ])
+        .toArray();
+
+    if (maxDocument?.maxId) {
+        await counters.updateOne(
+            { _id: name },
+            { $max: { seq: Number(maxDocument.maxId) } },
+            { upsert: true }
         );
     }
+}
 
-    const [columns] = await pool.query(`
-        SELECT COLUMN_NAME
-        FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'course_members'
-          AND COLUMN_NAME = 'role'
-    `);
+async function runMigrations() {
+    const db = await getDb();
 
-    if (columns.length === 0) {
-        await pool.query(
-            "ALTER TABLE course_members ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'student'"
-        );
-    }
+    await Promise.all([
+        db.collection("users").createIndex({ email: 1 }, { unique: true }),
+        db.collection("users").createIndex({ username: 1 }, { unique: true }),
+        db.collection("users").createIndex({ user_code: 1 }, { unique: true }),
+        db.collection("course_members").createIndex({ course_id: 1, user_id: 1 }, { unique: true }),
+        db.collection("course_members").createIndex({ user_id: 1 }),
+        db.collection("messages").createIndex({ course_id: 1, id: -1 }),
+        db.collection("notes").createIndex({ course_id: 1, created_at: -1 }),
+        db.collection("assignments").createIndex({ course_id: 1, created_at: -1 }),
+        db.collection("assignment_submissions").createIndex({ assignment_id: 1, user_id: 1 }, { unique: true }),
+        db.collection("friend_requests").createIndex({ pair_key: 1 }, { unique: true }),
+        db.collection("friend_requests").createIndex({ sender_id: 1, receiver_id: 1, status: 1 }),
+        db.collection("private_conversations").createIndex({ user_one_id: 1, user_two_id: 1 }, { unique: true }),
+        db.collection("private_messages").createIndex({ conversation_id: 1, id: -1 }),
+    ]);
 
-    await pool.query(`
-        UPDATE course_members cm
-        JOIN courses c ON cm.course_id = c.id
-        SET cm.role = 'admin'
-        WHERE cm.user_id = c.user_id
-    `);
+    await Promise.all([
+        "users",
+        "courses",
+        "course_members",
+        "messages",
+        "notes",
+        "assignments",
+        "assignment_submissions",
+        "friend_requests",
+        "private_conversations",
+        "private_messages",
+    ].map(syncCounter));
+}
 
-    await pool.query(`
-        UPDATE course_members
-        SET role = 'student'
-        WHERE role IS NULL OR TRIM(role) = ''
-    `);
-
-    await pool.query("UPDATE course_members SET role = LOWER(role)");
-
-    const [usersMissingCode] = await pool.query(`
-        SELECT id, username
-        FROM users
-        WHERE user_code IS NULL OR TRIM(user_code) = ''
-        ORDER BY id ASC
-    `);
-
-    for (const user of usersMissingCode) {
-        const userCode = await generateUniqueUserCode(pool, user.username);
-        await pool.query(
-            "UPDATE users SET user_code = ? WHERE id = ?",
-            [userCode, user.id]
-        );
-    }
+module.exports = {
+    collection,
+    getClient,
+    getDb,
+    insertWithId,
+    nextId,
+    runMigrations,
 };
-
-module.exports = pool;

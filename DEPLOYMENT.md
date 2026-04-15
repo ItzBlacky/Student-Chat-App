@@ -3,7 +3,7 @@
 The project is split into two deployment roots:
 
 - `frontend/` is the static browser app for Vercel and the GoDaddy domain.
-- `backend/` is the Node.js, Express, Socket.IO, and MySQL API service for a backend host such as Render, Railway, or a VPS.
+- `backend/` is the Node.js, Express, Socket.IO, and MongoDB API service for a backend host such as Render, Railway, or a VPS.
 
 ## Backend Environment
 
@@ -14,12 +14,16 @@ Required environment variables:
 ```env
 PORT=5000
 JWT_SECRET=replace-with-a-long-random-secret
-DB_HOST=your-mysql-host
-DB_USER=your-mysql-user
-DB_PASS=your-mysql-password
-DB_NAME=your-mysql-database
+MONGO_URI=mongodb+srv://user:password@cluster.example.mongodb.net/?appName=YourApp
+MONGO_DB_NAME=studymate
 FRONTEND_URL=https://your-godaddy-domain.com
 ```
+
+`MONGO_DB_NAME` is required when the database name is not included in the `MONGO_URI` path.
+
+Rotate any database password that has been shared in chat, screenshots, commits, or deployment logs. After rotating, update `MONGO_URI` in local `.env` and in the backend host's environment variables.
+
+In MongoDB Atlas, open **Network Access** and allow the backend host's outbound IP address. For temporary testing only, you can allow `0.0.0.0/0`; tighten this before production use.
 
 Use `FRONTEND_URLS` instead of `FRONTEND_URL` if you need multiple allowed origins:
 
@@ -33,6 +37,15 @@ Backend commands:
 npm install
 npm start
 ```
+
+Health checks:
+
+```text
+GET /
+GET /health
+```
+
+Both endpoints ping MongoDB. A healthy backend returns `status: "ok"` and `database: "connected"`. If MongoDB is unreachable, the endpoint returns HTTP `503`.
 
 ## Frontend Environment
 

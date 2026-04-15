@@ -1,95 +1,91 @@
 const express = require("express");
-const router = express.Router();
 const multer = require("multer");
-
-const pool = require("../db");
-const authenticateToken = require("../middleware/authMiddleware");
-
-
-// MULTER CONFIG
 const path = require("path");
 
-const storage = multer.diskStorage({
+const db = require("../db");
+const authenticateToken = require("../middleware/authMiddleware");
 
+const router = express.Router();
+
+const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, path.join(__dirname, "../uploads"));
     },
-
     filename: (req, file, cb) => {
         cb(null, Date.now() + "-" + file.originalname);
     }
-
 });
 
 const upload = multer({ storage });
 
+function numericId(value) {
+    const id = Number(value);
+    return Number.isFinite(id) ? id : null;
+}
 
-// UPLOAD NOTE
-router.post("/:courseId/notes",
-    authenticateToken,
-    upload.single("file"),
-    async (req, res) => {
+async function isCourseMember(courseId, userId) {
+    const courseMembers = await db.collection("course_members");
+    return !!await courseMembers.findOne({ course_id: courseId, user_id: userId });
+}
 
-        try {
+router.post("/:courseId/notes", authenticateToken, upload.single("file"), async (req, res) => {
+    try {
+        const courseId = numericId(req.params.courseId);
+        const { title } = req.body;
 
-            const { courseId } = req.params;
-            const { title } = req.body;
-
-            if (!req.file) {
-                return res.status(400).json({ error: "File missing" });
-            }
-
-            const filePath = req.file.filename;
-
-            await pool.query(
-                "INSERT INTO notes (course_id, user_id, title, file_path) VALUES (?, ?, ?, ?)",
-                [
-                    courseId,
-                    req.user.id,
-                    title || req.file.originalname,
-                    filePath
-                ]
-            );
-
-            res.json({
-                message: "Note uploaded",
-                file: filePath
-            });
-
-        } catch (error) {
-
-            console.error(error);
-
-            res.status(500).json({
-                error: "Upload failed"
-            });
-
+        if (!courseId) {
+            return res.status(400).json({ error: "Course is required" });
         }
 
-});
-router.get("/:courseId/notes", authenticateToken, async (req, res) => {
+        if (!await isCourseMember(courseId, req.user.id)) {
+            return res.status(403).json({ error: "You are not a member of this course" });
+        }
 
-    const { courseId } = req.params;
+        if (!req.file) {
+            return res.status(400).json({ error: "File missing" });
+        }
 
-    try {
-
-        const [rows] = await pool.query(
-            "SELECT * FROM notes WHERE course_id = ? ORDER BY created_at DESC",
-            [courseId]
-        );
-
-        res.json(rows);
-
-    } catch (error) {
-
-        console.error(error);
-
-        res.status(500).json({
-            error: "Failed to fetch notes"
+        const filePath = req.file.filename;
+        await db.insertWithId("notes", {
+            course_id: courseId,
+            user_id: req.user.id,
+            title: title || req.file.originalname,
+            file_path: filePath,
         });
 
+        res.json({
+            message: "Note uploaded",
+            file: filePath,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Upload failed" });
+    }
+});
+
+router.get("/:courseId/notes", authenticateToken, async (req, res) => {
+    const courseId = numericId(req.params.courseId);
+
+    if (!courseId) {
+        return res.status(400).json({ error: "Course is required" });
     }
 
+    try {
+        if (!await isCourseMember(courseId, req.user.id)) {
+            return res.status(403).json({ error: "You are not a member of this course" });
+        }
+
+        const notes = await db.collection("notes");
+        const rows = await notes
+            .find({ course_id: courseId }, { projection: { _id: 0 } })
+            .sort({ created_at: -1 })
+            .toArray();
+
+        res.json(rows);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Failed to fetch notes" });
+    }
 });
 
 module.exports = router;

@@ -8,7 +8,7 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
 
-const pool = require("./db");
+const db = require("./db");
 const authRoutes = require("./routes/auth");
 const notesRoutes = require("./routes/notes");
 const coursesRoutes = require("./routes/courses");
@@ -65,11 +65,43 @@ app.set("io", io);
 // static uploads
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-app.get("/", (req, res) => {
-  res.json({
+async function getHealthStatus() {
+  await (await db.getDb()).command({ ping: 1 });
+
+  return {
     service: "StudyMate API",
-    status: "ok"
-  });
+    status: "ok",
+    database: "connected",
+    timestamp: new Date().toISOString()
+  };
+}
+
+app.get("/", async (req, res) => {
+  try {
+    res.json(await getHealthStatus());
+  } catch (error) {
+    res.status(503).json({
+      service: "StudyMate API",
+      status: "degraded",
+      database: "unreachable",
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+app.get("/health", async (req, res) => {
+  try {
+    res.json(await getHealthStatus());
+  } catch (error) {
+    res.status(503).json({
+      service: "StudyMate API",
+      status: "degraded",
+      database: "unreachable",
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // ROUTES (clean structure)
@@ -88,18 +120,19 @@ io.on("connection", (socket) => {
   socket.on("authenticate", async (token) => {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      const [rows] = await pool.query(
-        "SELECT id, username, email, user_code FROM users WHERE id = ?",
-        [decoded.id]
+      const users = await db.collection("users");
+      const user = await users.findOne(
+        { id: Number(decoded.id) },
+        { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } }
       );
 
-      if (rows.length === 0) {
+      if (!user) {
         socket.emit("unauthorized", { error: "User not found" });
         return;
       }
 
-      socket.user = rows[0];
-      socket.emit("authenticated", { user: rows[0] });
+      socket.user = user;
+      socket.emit("authenticated", { user });
     } catch (err) {
       console.warn("Socket auth failed", err.message);
       socket.emit("unauthorized", { error: "Invalid token" });
@@ -149,18 +182,16 @@ io.on("connection", (socket) => {
     if (!socket.user || !conversationId) return;
 
     try {
-      const [rows] = await pool.query(
-        `
-        SELECT id
-        FROM private_conversations
-        WHERE id = ?
-          AND (user_one_id = ? OR user_two_id = ?)
-        LIMIT 1
-        `,
-        [conversationId, socket.user.id, socket.user.id]
-      );
+      const privateConversations = await db.collection("private_conversations");
+      const conversation = await privateConversations.findOne({
+        id: Number(conversationId),
+        $or: [
+          { user_one_id: socket.user.id },
+          { user_two_id: socket.user.id },
+        ],
+      });
 
-      if (rows.length === 0) {
+      if (!conversation) {
         return;
       }
 
@@ -179,18 +210,16 @@ io.on("connection", (socket) => {
     if (!socket.user || !conversationId) return;
 
     try {
-      const [rows] = await pool.query(
-        `
-        SELECT id
-        FROM private_conversations
-        WHERE id = ?
-          AND (user_one_id = ? OR user_two_id = ?)
-        LIMIT 1
-        `,
-        [conversationId, socket.user.id, socket.user.id]
-      );
+      const privateConversations = await db.collection("private_conversations");
+      const conversation = await privateConversations.findOne({
+        id: Number(conversationId),
+        $or: [
+          { user_one_id: socket.user.id },
+          { user_two_id: socket.user.id },
+        ],
+      });
 
-      if (rows.length === 0) {
+      if (!conversation) {
         return;
       }
 
@@ -253,8 +282,8 @@ function startServer(initialPort, maxAttempts = 10) {
 
 async function initializeServer() {
   try {
-    if (typeof pool.runMigrations === "function") {
-      await pool.runMigrations();
+    if (typeof db.runMigrations === "function") {
+      await db.runMigrations();
     }
     startServer(PORT);
   } catch (error) {

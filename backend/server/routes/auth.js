@@ -1,18 +1,23 @@
 const express = require("express");
-const router = express.Router();
-const pool = require("../db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+
+const db = require("../db");
 const { generateUniqueUserCode } = require("../utils/userCode");
 
+const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET;
 
+function publicUser(user) {
+    return {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        user_code: user.user_code,
+    };
+}
 
-// =======================
-// REGISTER
-// =======================
 router.post("/register", async (req, res) => {
-
     const { username, email, password } = req.body;
 
     if (!username || !email || !password) {
@@ -20,7 +25,6 @@ router.post("/register", async (req, res) => {
     }
 
     const emailRegex = /\S+@\S+\.\S+/;
-
     if (!emailRegex.test(email)) {
         return res.status(400).json({ error: "Invalid email format" });
     }
@@ -30,38 +34,41 @@ router.post("/register", async (req, res) => {
     }
 
     try {
+        const users = await db.collection("users");
+        const normalizedEmail = email.trim().toLowerCase();
+        const existingUser = await users.findOne({
+            $or: [
+                { email: normalizedEmail },
+                { username: username.trim() },
+            ],
+        });
+
+        if (existingUser) {
+            return res.status(400).json({ error: "Email or username already registered" });
+        }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const userCode = await generateUniqueUserCode(pool, username);
+        const userCode = await generateUniqueUserCode(db, username);
 
-        await pool.query(
-            "INSERT INTO users (username, user_code, email, password) VALUES (?, ?, ?, ?)",
-            [username, userCode, email, hashedPassword]
-        );
+        await db.insertWithId("users", {
+            username: username.trim(),
+            user_code: userCode,
+            email: normalizedEmail,
+            password: hashedPassword,
+        });
 
         res.json({ message: "User registered successfully" });
-
     } catch (error) {
-
-        if (error.code === "ER_DUP_ENTRY") {
-            return res.status(400).json({
-                error: "Email already registered"
-            });
+        if (error.code === 11000) {
+            return res.status(400).json({ error: "Email or username already registered" });
         }
 
         console.error(error);
         res.status(500).json({ error: "Registration failed" });
-
     }
-
 });
 
-
-// =======================
-// LOGIN
-// =======================
 router.post("/login", async (req, res) => {
-
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -69,52 +76,28 @@ router.post("/login", async (req, res) => {
     }
 
     try {
+        const users = await db.collection("users");
+        const user = await users.findOne({ email: email.trim().toLowerCase() });
 
-        const [rows] = await pool.query(
-            "SELECT * FROM users WHERE email = ?",
-            [email]
-        );
-
-        if (rows.length === 0) {
+        if (!user) {
             return res.status(400).json({ error: "Invalid credentials" });
         }
 
-        const user = rows[0];
-
         const match = await bcrypt.compare(password, user.password);
-
         if (!match) {
             return res.status(400).json({ error: "Invalid credentials" });
         }
 
-        const token = jwt.sign(
-            {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                user_code: user.user_code
-            },
-            JWT_SECRET,
-            { expiresIn: "1d" }
-        );
+        const token = jwt.sign(publicUser(user), JWT_SECRET, { expiresIn: "1d" });
 
         res.json({
             token,
-            user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                user_code: user.user_code
-            }
+            user: publicUser(user),
         });
-
     } catch (error) {
-
         console.error(error);
         res.status(500).json({ error: "Login failed" });
-
     }
-
 });
 
 module.exports = router;

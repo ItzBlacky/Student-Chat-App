@@ -1,44 +1,61 @@
 const express = require("express");
-const router = express.Router();
 
-const pool = require("../db");
+const db = require("../db");
 const authenticateToken = require("../middleware/authMiddleware");
+
+const router = express.Router();
 
 function normalizeCourseRole(role) {
     return String(role || "").toLowerCase();
 }
 
-async function getCourseMembership(courseId, userId) {
-    const [rows] = await pool.query(
-        `
-        SELECT course_members.*, LOWER(course_members.role) AS normalized_role
-        FROM course_members
-        WHERE course_members.course_id = ? AND course_members.user_id = ?
-        `,
-        [courseId, userId]
-    );
-
-    return rows[0] || null;
+function numericId(value) {
+    const id = Number(value);
+    return Number.isFinite(id) ? id : null;
 }
 
-// =======================
-// GET JOINED COURSES
-// =======================
+async function getCourseMembership(courseId, userId) {
+    const courseMembers = await db.collection("course_members");
+    const membership = await courseMembers.findOne({
+        course_id: numericId(courseId),
+        user_id: Number(userId),
+    });
+
+    if (!membership) {
+        return null;
+    }
+
+    return {
+        ...membership,
+        normalized_role: normalizeCourseRole(membership.role),
+    };
+}
+
 router.get("/", authenticateToken, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            `
-            SELECT
-                courses.*,
-                LOWER(course_members.role) AS course_role,
-                courses.user_id = ? AS is_owner
-            FROM courses
-            JOIN course_members ON courses.id = course_members.course_id
-            WHERE course_members.user_id = ?
-            ORDER BY courses.id DESC
-            `,
-            [req.user.id, req.user.id]
-        );
+        const courses = await db.collection("courses");
+        const courseMembers = await db.collection("course_members");
+        const memberships = await courseMembers
+            .find({ user_id: req.user.id })
+            .sort({ course_id: -1 })
+            .toArray();
+        const courseIds = memberships.map((membership) => membership.course_id);
+        const courseRows = await courses.find({ id: { $in: courseIds } }).toArray();
+        const coursesById = new Map(courseRows.map((course) => [course.id, course]));
+
+        const rows = memberships
+            .map((membership) => {
+                const course = coursesById.get(membership.course_id);
+                if (!course) return null;
+
+                return {
+                    ...course,
+                    course_role: normalizeCourseRole(membership.role),
+                    is_owner: Number(course.user_id) === Number(req.user.id),
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => b.id - a.id);
 
         res.json(rows);
     } catch (err) {
@@ -47,24 +64,16 @@ router.get("/", authenticateToken, async (req, res) => {
     }
 });
 
-// =======================
-// DISCOVER COURSES
-// =======================
 router.get("/discover", authenticateToken, async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            `
-            SELECT *
-            FROM courses
-            WHERE id NOT IN (
-                SELECT course_id
-                FROM course_members
-                WHERE user_id = ?
-            )
-            ORDER BY id DESC
-            `,
-            [req.user.id]
-        );
+        const courses = await db.collection("courses");
+        const courseMembers = await db.collection("course_members");
+        const memberships = await courseMembers.find({ user_id: req.user.id }).toArray();
+        const joinedCourseIds = memberships.map((membership) => membership.course_id);
+        const rows = await courses
+            .find({ id: { $nin: joinedCourseIds } })
+            .sort({ id: -1 })
+            .toArray();
 
         res.json(rows);
     } catch (err) {
@@ -73,65 +82,62 @@ router.get("/discover", authenticateToken, async (req, res) => {
     }
 });
 
-// =======================
-// CREATE COURSE
-// =======================
 router.post("/", authenticateToken, async (req, res) => {
-    const { name } = req.body;
+    const name = String(req.body.name || "").trim();
 
     if (!name) {
         return res.status(400).json({ error: "Course name required" });
     }
 
-    const conn = await pool.getConnection();
-
     try {
-        await conn.beginTransaction();
+        const course = await db.insertWithId("courses", {
+            name,
+            user_id: req.user.id,
+        });
 
-        const [result] = await conn.query(
-            "INSERT INTO courses (name, user_id) VALUES (?, ?)",
-            [name, req.user.id]
-        );
+        await db.insertWithId("course_members", {
+            course_id: course.id,
+            user_id: req.user.id,
+            role: "admin",
+            joined_at: new Date(),
+        });
 
-        const courseId = result.insertId;
-
-        await conn.query(
-            "INSERT INTO course_members (course_id, user_id, role) VALUES (?, ?, ?)",
-            [courseId, req.user.id, "admin"]
-        );
-
-        await conn.commit();
-
-        res.json({ message: "Course created", courseId });
+        res.json({ message: "Course created", courseId: course.id });
     } catch (err) {
-        await conn.rollback();
-
-        if (err.code === "ER_DUP_ENTRY") {
-            return res.status(400).json({ error: "Course already exists" });
+        if (err.code === 11000) {
+            return res.status(400).json({ error: "Course already exists or joined" });
         }
 
         console.error(err);
         res.status(500).json({ error: "Failed to create course" });
-    } finally {
-        conn.release();
     }
 });
 
-// =======================
-// JOIN COURSE
-// =======================
 router.post("/:id/join", authenticateToken, async (req, res) => {
-    const courseId = req.params.id;
+    const courseId = numericId(req.params.id);
+
+    if (!courseId) {
+        return res.status(400).json({ error: "Course is required" });
+    }
 
     try {
-        await pool.query(
-            "INSERT INTO course_members (course_id, user_id, role) VALUES (?, ?, ?)",
-            [courseId, req.user.id, "student"]
-        );
+        const courses = await db.collection("courses");
+        const course = await courses.findOne({ id: courseId });
+
+        if (!course) {
+            return res.status(404).json({ error: "Course not found" });
+        }
+
+        await db.insertWithId("course_members", {
+            course_id: courseId,
+            user_id: req.user.id,
+            role: "student",
+            joined_at: new Date(),
+        });
 
         res.json({ message: "Joined course" });
     } catch (err) {
-        if (err.code === "ER_DUP_ENTRY") {
+        if (err.code === 11000) {
             return res.json({ message: "Already joined" });
         }
 
@@ -140,11 +146,12 @@ router.post("/:id/join", authenticateToken, async (req, res) => {
     }
 });
 
-// =======================
-// GET COURSE MEMBERS
-// =======================
 router.get("/:id/members", authenticateToken, async (req, res) => {
-    const courseId = req.params.id;
+    const courseId = numericId(req.params.id);
+
+    if (!courseId) {
+        return res.status(400).json({ error: "Course is required" });
+    }
 
     try {
         const membership = await getCourseMembership(courseId, req.user.id);
@@ -153,26 +160,30 @@ router.get("/:id/members", authenticateToken, async (req, res) => {
             return res.status(403).json({ error: "You are not a member of this course" });
         }
 
-        const [members] = await pool.query(
-            `
-            SELECT
-                users.id,
-                users.username,
-                users.email,
-                LOWER(course_members.role) AS role
-            FROM course_members
-            JOIN users ON users.id = course_members.user_id
-            WHERE course_members.course_id = ?
-            ORDER BY
-                CASE LOWER(course_members.role)
-                    WHEN 'admin' THEN 0
-                    WHEN 'teacher' THEN 1
-                    ELSE 2
-                END,
-                users.username ASC
-            `,
-            [courseId]
-        );
+        const users = await db.collection("users");
+        const courseMembers = await db.collection("course_members");
+        const memberships = await courseMembers.find({ course_id: courseId }).toArray();
+        const userIds = memberships.map((item) => item.user_id);
+        const userRows = await users
+            .find({ id: { $in: userIds } }, { projection: { _id: 0, id: 1, username: 1, email: 1 } })
+            .toArray();
+        const usersById = new Map(userRows.map((user) => [user.id, user]));
+        const roleOrder = { admin: 0, teacher: 1, student: 2 };
+
+        const members = memberships
+            .map((item) => {
+                const user = usersById.get(item.user_id);
+                if (!user) return null;
+                return {
+                    ...user,
+                    role: normalizeCourseRole(item.role),
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => {
+                const roleDelta = (roleOrder[a.role] ?? 3) - (roleOrder[b.role] ?? 3);
+                return roleDelta || a.username.localeCompare(b.username);
+            });
 
         res.json(members);
     } catch (error) {
@@ -181,14 +192,15 @@ router.get("/:id/members", authenticateToken, async (req, res) => {
     }
 });
 
-// =======================
-// UPDATE COURSE MEMBER ROLE
-// =======================
 router.patch("/:id/members/:userId", authenticateToken, async (req, res) => {
-    const courseId = req.params.id;
-    const targetUserId = Number(req.params.userId);
+    const courseId = numericId(req.params.id);
+    const targetUserId = numericId(req.params.userId);
     const currentUserId = Number(req.user.id);
     const requestedRole = normalizeCourseRole(req.body.role);
+
+    if (!courseId || !targetUserId) {
+        return res.status(400).json({ error: "Course and member are required" });
+    }
 
     if (!["teacher", "student"].includes(requestedRole)) {
         return res.status(400).json({ error: "Role must be teacher or student" });
@@ -209,32 +221,26 @@ router.patch("/:id/members/:userId", authenticateToken, async (req, res) => {
             return res.status(400).json({ error: "Course admin role cannot be changed here" });
         }
 
-        const [courseRows] = await pool.query(
-            "SELECT user_id FROM courses WHERE id = ?",
-            [courseId]
-        );
+        const courses = await db.collection("courses");
+        const course = await courses.findOne({ id: courseId });
 
-        if (courseRows.length === 0) {
+        if (!course) {
             return res.status(404).json({ error: "Course not found" });
         }
 
-        if (Number(courseRows[0].user_id) === targetUserId) {
+        if (Number(course.user_id) === targetUserId) {
             return res.status(400).json({ error: "Course creator remains the admin" });
         }
 
-        const [targetRows] = await pool.query(
-            "SELECT * FROM course_members WHERE course_id = ? AND user_id = ?",
-            [courseId, targetUserId]
+        const courseMembers = await db.collection("course_members");
+        const result = await courseMembers.updateOne(
+            { course_id: courseId, user_id: targetUserId },
+            { $set: { role: requestedRole } }
         );
 
-        if (targetRows.length === 0) {
+        if (result.matchedCount === 0) {
             return res.status(404).json({ error: "Member not found in this course" });
         }
-
-        await pool.query(
-            "UPDATE course_members SET role = ? WHERE course_id = ? AND user_id = ?",
-            [requestedRole, courseId, targetUserId]
-        );
 
         res.json({ message: "Course role updated", role: requestedRole });
     } catch (error) {
@@ -243,41 +249,50 @@ router.patch("/:id/members/:userId", authenticateToken, async (req, res) => {
     }
 });
 
-// =======================
-// DELETE COURSE OR LEAVE COURSE
-// =======================
 router.delete("/:id", authenticateToken, async (req, res) => {
-    const courseId = req.params.id;
+    const courseId = numericId(req.params.id);
+
+    if (!courseId) {
+        return res.status(400).json({ error: "Course is required" });
+    }
 
     try {
-        const [courseRows] = await pool.query(
-            "SELECT user_id FROM courses WHERE id = ?",
-            [courseId]
-        );
+        const courses = await db.collection("courses");
+        const course = await courses.findOne({ id: courseId });
 
-        if (courseRows.length === 0) {
+        if (!course) {
             return res.status(404).json({ error: "Course not found" });
         }
 
-        if (courseRows[0].user_id !== req.user.id) {
+        const courseMembers = await db.collection("course_members");
+
+        if (Number(course.user_id) !== Number(req.user.id)) {
             const membership = await getCourseMembership(courseId, req.user.id);
 
             if (!membership) {
                 return res.status(403).json({ error: "You are not a member of this course" });
             }
 
-            await pool.query(
-                "DELETE FROM course_members WHERE course_id = ? AND user_id = ?",
-                [courseId, req.user.id]
-            );
-
+            await courseMembers.deleteOne({ course_id: courseId, user_id: req.user.id });
             return res.json({ message: "Left course" });
         }
 
-        await pool.query("DELETE FROM course_members WHERE course_id = ?", [courseId]);
-        await pool.query("DELETE FROM messages WHERE course_id = ?", [courseId]);
-        await pool.query("DELETE FROM notes WHERE course_id = ?", [courseId]);
-        await pool.query("DELETE FROM courses WHERE id = ?", [courseId]);
+        const [messages, notes, assignments, submissions] = await Promise.all([
+            db.collection("messages"),
+            db.collection("notes"),
+            db.collection("assignments"),
+            db.collection("assignment_submissions"),
+        ]);
+        const assignmentIds = (await assignments.find({ course_id: courseId }).toArray()).map((item) => item.id);
+
+        await Promise.all([
+            courseMembers.deleteMany({ course_id: courseId }),
+            messages.deleteMany({ course_id: courseId }),
+            notes.deleteMany({ course_id: courseId }),
+            submissions.deleteMany({ assignment_id: { $in: assignmentIds } }),
+            assignments.deleteMany({ course_id: courseId }),
+            courses.deleteOne({ id: courseId }),
+        ]);
 
         res.json({ message: "Course deleted" });
     } catch (error) {

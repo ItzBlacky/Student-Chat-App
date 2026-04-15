@@ -10,19 +10,17 @@ function normalizeUserCodeBase(username) {
     return cleaned.slice(0, 18);
 }
 
-async function generateUniqueUserCode(pool, username) {
+async function generateUniqueUserCode(db, username) {
     const base = normalizeUserCodeBase(username);
     let candidate = base;
     let suffix = 1;
 
     // Keep codes short, readable, and based on the username.
     while (true) {
-        const [rows] = await pool.query(
-            "SELECT id FROM users WHERE user_code = ? LIMIT 1",
-            [candidate]
-        );
+        const users = await db.collection("users");
+        const existingUser = await users.findOne({ user_code: candidate }, { projection: { id: 1 } });
 
-        if (rows.length === 0) {
+        if (!existingUser) {
             return candidate;
         }
 

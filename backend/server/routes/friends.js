@@ -1,6 +1,6 @@
 const express = require("express");
 
-const pool = require("../db");
+const db = require("../db");
 const authenticateToken = require("../middleware/authMiddleware");
 
 const router = express.Router();
@@ -17,217 +17,180 @@ function sortUserPair(userA, userB) {
     return [low, high];
 }
 
-async function ensureConversation(userA, userB) {
-    const [firstUserId, secondUserId] = sortUserPair(userA, userB);
-
-    const [existing] = await pool.query(
-        `
-        SELECT id, user_one_id, user_two_id
-        FROM private_conversations
-        WHERE user_one_id = ? AND user_two_id = ?
-        LIMIT 1
-        `,
-        [firstUserId, secondUserId]
-    );
-
-    if (existing.length > 0) {
-        return existing[0];
-    }
-
-    const [result] = await pool.query(
-        `
-        INSERT INTO private_conversations (user_one_id, user_two_id)
-        VALUES (?, ?)
-        `,
-        [firstUserId, secondUserId]
-    );
-
-    return {
-        id: result.insertId,
-        user_one_id: firstUserId,
-        user_two_id: secondUserId,
-    };
-}
-
-async function getFriendship(currentUserId, otherUserId) {
-    const pairKey = buildPairKey(currentUserId, otherUserId);
-    const [rows] = await pool.query(
-        `
-        SELECT *
-        FROM friend_requests
-        WHERE pair_key = ?
-        LIMIT 1
-        `,
-        [pairKey]
-    );
-
-    return rows[0] || null;
-}
-
-async function requireAcceptedFriendship(currentUserId, otherUserId) {
-    const friendship = await getFriendship(currentUserId, otherUserId);
-
-    if (!friendship || friendship.status !== "accepted") {
-        return null;
-    }
-
-    return friendship;
+function numericId(value) {
+    const id = Number(value);
+    return Number.isFinite(id) ? id : null;
 }
 
 function formatPeopleStatus(friendship, currentUserId) {
-    if (!friendship) {
-        return "none";
-    }
-
-    if (friendship.status === "accepted") {
-        return "friend";
-    }
-
+    if (!friendship) return "none";
+    if (friendship.status === "accepted") return "friend";
     if (friendship.status === "pending") {
         return Number(friendship.sender_id) === Number(currentUserId)
             ? "outgoing_pending"
             : "incoming_pending";
     }
-
     return "none";
 }
 
-async function getCourseSummaryForUser(userId) {
-    const [rows] = await pool.query(
-        `
-        SELECT c.id, c.name, LOWER(cm.role) AS role
-        FROM course_members cm
-        JOIN courses c ON c.id = cm.course_id
-        WHERE cm.user_id = ?
-        ORDER BY c.name ASC
-        `,
-        [userId]
+async function publicUserById(userId) {
+    const users = await db.collection("users");
+    return users.findOne(
+        { id: Number(userId) },
+        { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } }
     );
+}
 
-    return rows;
+async function getFriendship(currentUserId, otherUserId) {
+    const friendRequests = await db.collection("friend_requests");
+    return friendRequests.findOne({ pair_key: buildPairKey(currentUserId, otherUserId) });
+}
+
+async function requireAcceptedFriendship(currentUserId, otherUserId) {
+    const friendship = await getFriendship(currentUserId, otherUserId);
+    return friendship?.status === "accepted" ? friendship : null;
+}
+
+async function ensureConversation(userA, userB) {
+    const [firstUserId, secondUserId] = sortUserPair(userA, userB);
+    const privateConversations = await db.collection("private_conversations");
+    const existing = await privateConversations.findOne({
+        user_one_id: firstUserId,
+        user_two_id: secondUserId,
+    });
+
+    if (existing) {
+        return existing;
+    }
+
+    return db.insertWithId("private_conversations", {
+        user_one_id: firstUserId,
+        user_two_id: secondUserId,
+    });
+}
+
+async function getCourseSummaryForUser(userId) {
+    const courseMembers = await db.collection("course_members");
+    const courses = await db.collection("courses");
+    const memberships = await courseMembers.find({ user_id: Number(userId) }).toArray();
+    const courseIds = memberships.map((membership) => membership.course_id);
+    const courseRows = await courses
+        .find({ id: { $in: courseIds } }, { projection: { _id: 0, id: 1, name: 1 } })
+        .sort({ name: 1 })
+        .toArray();
+    const coursesById = new Map(courseRows.map((course) => [course.id, course]));
+
+    return memberships
+        .map((membership) => {
+            const course = coursesById.get(membership.course_id);
+            if (!course) return null;
+            return {
+                id: course.id,
+                name: course.name,
+                role: String(membership.role || "student").toLowerCase(),
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function getCommonCourseInfo(perspectiveUserId, otherUserId) {
+    const [perspectiveCourses, otherCourses] = await Promise.all([
+        getCourseSummaryForUser(perspectiveUserId),
+        getCourseSummaryForUser(otherUserId),
+    ]);
+    const perspectiveCourseIds = new Set(perspectiveCourses.map((course) => course.id));
+    const commonCourses = otherCourses
+        .filter((course) => perspectiveCourseIds.has(course.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    return {
+        mutual_courses: commonCourses.length,
+        common_course_names: commonCourses.map((course) => course.name).join(", "),
+    };
 }
 
 async function getFriendCountForUser(userId) {
-    const [rows] = await pool.query(
-        `
-        SELECT COUNT(*) AS total
-        FROM friend_requests
-        WHERE status = 'accepted'
-          AND (sender_id = ? OR receiver_id = ?)
-        `,
-        [userId, userId]
-    );
+    const friendRequests = await db.collection("friend_requests");
+    return friendRequests.countDocuments({
+        status: "accepted",
+        $or: [
+            { sender_id: Number(userId) },
+            { receiver_id: Number(userId) },
+        ],
+    });
+}
 
-    return Number(rows[0]?.total || 0);
+async function getAcceptedFriendIds(userId) {
+    const friendRequests = await db.collection("friend_requests");
+    const rows = await friendRequests
+        .find({
+            status: "accepted",
+            $or: [
+                { sender_id: Number(userId) },
+                { receiver_id: Number(userId) },
+            ],
+        })
+        .toArray();
+
+    return rows.map((row) => Number(row.sender_id) === Number(userId) ? row.receiver_id : row.sender_id);
+}
+
+async function enrichUserForFriendList(user, perspectiveUserId) {
+    const conversation = await ensureConversation(perspectiveUserId, user.id);
+    const commonInfo = await getCommonCourseInfo(perspectiveUserId, user.id);
+
+    return {
+        ...user,
+        conversation_id: conversation.id,
+        mutual_courses: commonInfo.mutual_courses,
+        common_course_names: commonInfo.common_course_names,
+    };
 }
 
 async function getFriendsForUser(userId, perspectiveUserId = userId) {
-    const [rows] = await pool.query(
-        `
-        SELECT
-            u.id,
-            u.username,
-            u.email,
-            u.user_code,
-            pc.id AS conversation_id,
-            COALESCE(common_courses.common_courses, 0) AS mutual_courses,
-            COALESCE(common_courses.common_course_names, '') AS common_course_names
-        FROM friend_requests fr
-        JOIN users u
-            ON u.id = CASE
-                WHEN fr.sender_id = ? THEN fr.receiver_id
-                ELSE fr.sender_id
-            END
-        LEFT JOIN private_conversations pc
-            ON (
-                (pc.user_one_id = ? AND pc.user_two_id = u.id)
-                OR
-                (pc.user_one_id = u.id AND pc.user_two_id = ?)
-            )
-        LEFT JOIN (
-            SELECT
-                cm_other.user_id,
-                COUNT(DISTINCT cm_other.course_id) AS common_courses,
-                GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS common_course_names
-            FROM course_members cm_self
-            JOIN course_members cm_other
-                ON cm_self.course_id = cm_other.course_id
-                AND cm_other.user_id <> cm_self.user_id
-            JOIN courses c ON c.id = cm_self.course_id
-            WHERE cm_self.user_id = ?
-            GROUP BY cm_other.user_id
-        ) AS common_courses
-            ON common_courses.user_id = u.id
-        WHERE fr.status = 'accepted'
-          AND (fr.sender_id = ? OR fr.receiver_id = ?)
-        ORDER BY u.username ASC
-        `,
-        [userId, perspectiveUserId, perspectiveUserId, perspectiveUserId, userId, userId]
-    );
+    const users = await db.collection("users");
+    const friendIds = await getAcceptedFriendIds(userId);
+    const userRows = await users
+        .find({ id: { $in: friendIds } }, { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } })
+        .sort({ username: 1 })
+        .toArray();
 
-    return rows;
+    return Promise.all(userRows.map((user) => enrichUserForFriendList(user, perspectiveUserId)));
 }
 
 async function getMutualFriends(currentUserId, otherUserId) {
-    const [rows] = await pool.query(
-        `
-        SELECT
-            u.id,
-            u.username,
-            u.email,
-            u.user_code,
-            pc.id AS conversation_id,
-            COALESCE(common_courses.common_courses, 0) AS mutual_courses,
-            COALESCE(common_courses.common_course_names, '') AS common_course_names
-        FROM friend_requests fr_other
-        JOIN users u
-            ON u.id = CASE
-                WHEN fr_other.sender_id = ? THEN fr_other.receiver_id
-                ELSE fr_other.sender_id
-            END
-        JOIN friend_requests fr_self
-            ON fr_self.status = 'accepted'
-           AND fr_self.pair_key = CONCAT(LEAST(?, u.id), ':', GREATEST(?, u.id))
-        LEFT JOIN private_conversations pc
-            ON (
-                (pc.user_one_id = ? AND pc.user_two_id = u.id)
-                OR
-                (pc.user_one_id = u.id AND pc.user_two_id = ?)
-            )
-        LEFT JOIN (
-            SELECT
-                cm_other.user_id,
-                COUNT(DISTINCT cm_other.course_id) AS common_courses,
-                GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS common_course_names
-            FROM course_members cm_self
-            JOIN course_members cm_other
-                ON cm_self.course_id = cm_other.course_id
-                AND cm_other.user_id <> cm_self.user_id
-            JOIN courses c ON c.id = cm_self.course_id
-            WHERE cm_self.user_id = ?
-            GROUP BY cm_other.user_id
-        ) AS common_courses
-            ON common_courses.user_id = u.id
-        WHERE fr_other.status = 'accepted'
-          AND (fr_other.sender_id = ? OR fr_other.receiver_id = ?)
-          AND u.id NOT IN (?, ?)
-        ORDER BY u.username ASC
-        `,
-        [
-            otherUserId,
-            currentUserId,
-            currentUserId,
-            currentUserId,
-            currentUserId,
-            currentUserId,
-            otherUserId,
-            otherUserId,
-            currentUserId,
-            otherUserId,
-        ]
-    );
+    const currentFriendIds = new Set(await getAcceptedFriendIds(currentUserId));
+    const otherFriendIds = await getAcceptedFriendIds(otherUserId);
+    const mutualIds = otherFriendIds.filter((id) => (
+        currentFriendIds.has(id)
+        && Number(id) !== Number(currentUserId)
+        && Number(id) !== Number(otherUserId)
+    ));
+    const users = await db.collection("users");
+    const userRows = await users
+        .find({ id: { $in: mutualIds } }, { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } })
+        .sort({ username: 1 })
+        .toArray();
 
-    return rows;
+    return Promise.all(userRows.map((user) => enrichUserForFriendList(user, currentUserId)));
+}
+
+async function formatRequest(request, otherUserId, perspectiveUserId) {
+    const user = await publicUserById(otherUserId);
+    if (!user) return null;
+    const commonInfo = await getCommonCourseInfo(perspectiveUserId, otherUserId);
+
+    return {
+        id: request.id,
+        created_at: request.created_at,
+        user_id: user.id,
+        username: user.username,
+        email: user.email,
+        user_code: user.user_code,
+        mutual_courses: commonInfo.mutual_courses,
+        common_course_names: commonInfo.common_course_names,
+    };
 }
 
 router.get("/profile", authenticateToken, async (req, res) => {
@@ -257,24 +220,16 @@ router.get("/profile", authenticateToken, async (req, res) => {
 });
 
 router.get("/users/:userId/summary", authenticateToken, async (req, res) => {
-    const targetUserId = Number(req.params.userId);
+    const targetUserId = numericId(req.params.userId);
 
     if (!targetUserId) {
         return res.status(400).json({ error: "User is required" });
     }
 
     try {
-        const [userRows] = await pool.query(
-            `
-            SELECT id, username, email, user_code
-            FROM users
-            WHERE id = ?
-            LIMIT 1
-            `,
-            [targetUserId]
-        );
+        const user = await publicUserById(targetUserId);
 
-        if (userRows.length === 0) {
+        if (!user) {
             return res.status(404).json({ error: "User not found" });
         }
 
@@ -285,13 +240,12 @@ router.get("/users/:userId/summary", authenticateToken, async (req, res) => {
                 ? getFriendsForUser(targetUserId)
                 : getMutualFriends(req.user.id, targetUserId),
         ]);
-
         const friendship = targetUserId === req.user.id
             ? null
             : await getFriendship(req.user.id, targetUserId);
 
         res.json({
-            ...userRows[0],
+            ...user,
             total_courses: courses.length,
             total_friends: totalFriends,
             courses,
@@ -310,109 +264,36 @@ router.get("/overview", authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     try {
+        const friendRequests = await db.collection("friend_requests");
+        const users = await db.collection("users");
         const friends = await getFriendsForUser(userId);
-
-        const [incomingRequests] = await pool.query(
-            `
-            SELECT
-                fr.id,
-                fr.created_at,
-                u.id AS user_id,
-                u.username,
-                u.email,
-                u.user_code,
-                COALESCE(common_courses.common_courses, 0) AS mutual_courses,
-                COALESCE(common_courses.common_course_names, '') AS common_course_names
-            FROM friend_requests fr
-            JOIN users u ON u.id = fr.sender_id
-            LEFT JOIN (
-                SELECT
-                    cm_other.user_id,
-                    COUNT(DISTINCT cm_other.course_id) AS common_courses,
-                    GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS common_course_names
-                FROM course_members cm_self
-                JOIN course_members cm_other
-                    ON cm_self.course_id = cm_other.course_id
-                    AND cm_other.user_id <> cm_self.user_id
-                JOIN courses c ON c.id = cm_self.course_id
-                WHERE cm_self.user_id = ?
-                GROUP BY cm_other.user_id
-            ) AS common_courses
-                ON common_courses.user_id = u.id
-            WHERE fr.receiver_id = ?
-              AND fr.status = 'pending'
-            ORDER BY fr.created_at DESC
-            `,
-            [userId, userId]
-        );
-
-        const [outgoingRequests] = await pool.query(
-            `
-            SELECT
-                fr.id,
-                fr.created_at,
-                u.id AS user_id,
-                u.username,
-                u.email,
-                u.user_code,
-                COALESCE(common_courses.common_courses, 0) AS mutual_courses,
-                COALESCE(common_courses.common_course_names, '') AS common_course_names
-            FROM friend_requests fr
-            JOIN users u ON u.id = fr.receiver_id
-            LEFT JOIN (
-                SELECT
-                    cm_other.user_id,
-                    COUNT(DISTINCT cm_other.course_id) AS common_courses,
-                    GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS common_course_names
-                FROM course_members cm_self
-                JOIN course_members cm_other
-                    ON cm_self.course_id = cm_other.course_id
-                    AND cm_other.user_id <> cm_self.user_id
-                JOIN courses c ON c.id = cm_self.course_id
-                WHERE cm_self.user_id = ?
-                GROUP BY cm_other.user_id
-            ) AS common_courses
-                ON common_courses.user_id = u.id
-            WHERE fr.sender_id = ?
-              AND fr.status = 'pending'
-            ORDER BY fr.created_at DESC
-            `,
-            [userId, userId]
-        );
-
-        const [recommendations] = await pool.query(
-            `
-            SELECT
-                u.id,
-                u.username,
-                u.email,
-                u.user_code,
-                common_courses.common_courses AS mutual_courses,
-                common_courses.common_course_names
-            FROM users u
-            JOIN (
-                SELECT
-                    cm_other.user_id,
-                    COUNT(DISTINCT cm_other.course_id) AS common_courses,
-                    GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS common_course_names
-                FROM course_members cm_self
-                JOIN course_members cm_other
-                    ON cm_self.course_id = cm_other.course_id
-                    AND cm_other.user_id <> cm_self.user_id
-                JOIN courses c ON c.id = cm_self.course_id
-                WHERE cm_self.user_id = ?
-                GROUP BY cm_other.user_id
-            ) AS common_courses
-                ON common_courses.user_id = u.id
-            LEFT JOIN friend_requests fr
-                ON fr.pair_key = CONCAT(LEAST(?, u.id), ':', GREATEST(?, u.id))
-            WHERE u.id <> ?
-              AND fr.id IS NULL
-            ORDER BY common_courses.common_courses DESC, u.username ASC
-            LIMIT 8
-            `,
-            [userId, userId, userId, userId]
-        );
+        const [incomingRows, outgoingRows] = await Promise.all([
+            friendRequests.find({ receiver_id: userId, status: "pending" }).sort({ created_at: -1 }).toArray(),
+            friendRequests.find({ sender_id: userId, status: "pending" }).sort({ created_at: -1 }).toArray(),
+        ]);
+        const incomingRequests = (await Promise.all(
+            incomingRows.map((request) => formatRequest(request, request.sender_id, userId))
+        )).filter(Boolean);
+        const outgoingRequests = (await Promise.all(
+            outgoingRows.map((request) => formatRequest(request, request.receiver_id, userId))
+        )).filter(Boolean);
+        const currentFriendships = await friendRequests
+            .find({ $or: [{ sender_id: userId }, { receiver_id: userId }] })
+            .toArray();
+        const connectedUserIds = new Set(currentFriendships.flatMap((request) => [request.sender_id, request.receiver_id]));
+        connectedUserIds.add(userId);
+        const candidateUsers = await users
+            .find({ id: { $nin: [...connectedUserIds] } }, { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } })
+            .toArray();
+        const recommendations = (await Promise.all(candidateUsers.map(async (user) => {
+            const commonInfo = await getCommonCourseInfo(userId, user.id);
+            return commonInfo.mutual_courses > 0
+                ? { ...user, ...commonInfo }
+                : null;
+        })))
+            .filter(Boolean)
+            .sort((a, b) => b.mutual_courses - a.mutual_courses || a.username.localeCompare(b.username))
+            .slice(0, 8);
 
         res.json({
             friends,
@@ -435,70 +316,59 @@ router.get("/people-search", authenticateToken, async (req, res) => {
     }
 
     const normalizedQuery = rawQuery.toLowerCase();
-    const likeValue = `%${normalizedQuery}%`;
 
     try {
-        const [rows] = await pool.query(
-            `
-            SELECT
-                u.id,
-                u.username,
-                u.email,
-                u.user_code,
-                fr.id AS request_id,
-                fr.status AS friendship_status,
-                fr.sender_id,
-                fr.receiver_id,
-                COALESCE(common_courses.common_courses, 0) AS common_courses,
-                COALESCE(common_courses.common_course_names, '') AS common_course_names
-            FROM users u
-            LEFT JOIN friend_requests fr
-                ON fr.pair_key = CONCAT(LEAST(?, u.id), ':', GREATEST(?, u.id))
-            LEFT JOIN (
-                SELECT
-                    cm_other.user_id,
-                    COUNT(DISTINCT cm_other.course_id) AS common_courses,
-                    GROUP_CONCAT(DISTINCT c.name ORDER BY c.name SEPARATOR ', ') AS common_course_names
-                FROM course_members cm_self
-                JOIN course_members cm_other
-                    ON cm_self.course_id = cm_other.course_id
-                    AND cm_other.user_id <> cm_self.user_id
-                JOIN courses c ON c.id = cm_self.course_id
-                WHERE cm_self.user_id = ?
-                GROUP BY cm_other.user_id
-            ) AS common_courses
-                ON common_courses.user_id = u.id
-            WHERE u.id <> ?
-              AND (
-                LOWER(u.username) LIKE ?
-                OR LOWER(u.user_code) LIKE ?
-                OR LOWER(u.email) LIKE ?
-              )
-            ORDER BY
-                CASE
-                    WHEN LOWER(u.user_code) = ? THEN 0
-                    WHEN LOWER(u.username) = ? THEN 1
-                    WHEN LOWER(u.username) LIKE ? THEN 2
-                    ELSE 3
-                END,
-                CASE fr.status
-                    WHEN 'accepted' THEN 0
-                    WHEN 'pending' THEN 1
-                    ELSE 2
-                END,
-                common_courses.common_courses DESC,
-                u.username ASC
-            LIMIT 12
-            `,
-            [userId, userId, userId, userId, likeValue, likeValue, likeValue, normalizedQuery, normalizedQuery, `${normalizedQuery}%`]
-        );
+        const users = await db.collection("users");
+        const pattern = new RegExp(normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+        const rows = await users
+            .find({
+                id: { $ne: userId },
+                $or: [
+                    { username: pattern },
+                    { user_code: pattern },
+                    { email: pattern },
+                ],
+            }, { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } })
+            .limit(40)
+            .toArray();
 
-        const people = rows.map((person) => ({
-            ...person,
-            relationship: formatPeopleStatus(person, userId),
+        const people = await Promise.all(rows.map(async (person) => {
+            const friendship = await getFriendship(userId, person.id);
+            const commonInfo = await getCommonCourseInfo(userId, person.id);
+            return {
+                ...person,
+                request_id: friendship?.id || null,
+                friendship_status: friendship?.status || null,
+                sender_id: friendship?.sender_id || null,
+                receiver_id: friendship?.receiver_id || null,
+                common_courses: commonInfo.mutual_courses,
+                mutual_courses: commonInfo.mutual_courses,
+                common_course_names: commonInfo.common_course_names,
+                relationship: formatPeopleStatus(friendship, userId),
+            };
         }));
 
-        res.json(people);
+        people.sort((a, b) => {
+            const aUserCode = String(a.user_code || "").toLowerCase();
+            const bUserCode = String(b.user_code || "").toLowerCase();
+            const aUsername = String(a.username || "").toLowerCase();
+            const bUsername = String(b.username || "").toLowerCase();
+            const rank = (person, userCode, username) => {
+                if (userCode === normalizedQuery) return 0;
+                if (username === normalizedQuery) return 1;
+                if (username.startsWith(normalizedQuery)) return 2;
+                return 3;
+            };
+            const rankDelta = rank(a, aUserCode, aUsername) - rank(b, bUserCode, bUsername);
+            const statusOrder = { accepted: 0, pending: 1 };
+            const statusDelta = (statusOrder[a.friendship_status] ?? 2) - (statusOrder[b.friendship_status] ?? 2);
+            return rankDelta
+                || statusDelta
+                || b.mutual_courses - a.mutual_courses
+                || a.username.localeCompare(b.username);
+        });
+
+        res.json(people.slice(0, 12));
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Failed to search people" });
@@ -514,40 +384,25 @@ router.post("/request", authenticateToken, async (req, res) => {
     }
 
     try {
-        const [targetRows] = await pool.query(
-            `
-            SELECT id, username, email, user_code
-            FROM users
-            WHERE LOWER(user_code) = ?
-            LIMIT 1
-            `,
-            [userCode]
+        const users = await db.collection("users");
+        const targetUser = await users.findOne(
+            { user_code: userCode },
+            { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } }
         );
 
-        if (targetRows.length === 0) {
+        if (!targetUser) {
             return res.status(404).json({ error: "No user found with that friend ID" });
         }
-
-        const targetUser = targetRows[0];
 
         if (Number(targetUser.id) === Number(userId)) {
             return res.status(400).json({ error: "You cannot add yourself" });
         }
 
         const pairKey = buildPairKey(userId, targetUser.id);
-        const [existingRows] = await pool.query(
-            `
-            SELECT *
-            FROM friend_requests
-            WHERE pair_key = ?
-            LIMIT 1
-            `,
-            [pairKey]
-        );
+        const friendRequests = await db.collection("friend_requests");
+        const existing = await friendRequests.findOne({ pair_key: pairKey });
 
-        if (existingRows.length > 0) {
-            const existing = existingRows[0];
-
+        if (existing) {
             if (existing.status === "accepted") {
                 return res.status(400).json({ error: "You are already friends" });
             }
@@ -557,15 +412,10 @@ router.post("/request", authenticateToken, async (req, res) => {
                     return res.status(400).json({ error: "Friend request already sent" });
                 }
 
-                await pool.query(
-                    `
-                    UPDATE friend_requests
-                    SET status = 'accepted', updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    `,
-                    [existing.id]
+                await friendRequests.updateOne(
+                    { id: existing.id },
+                    { $set: { status: "accepted", updated_at: new Date() } }
                 );
-
                 const conversation = await ensureConversation(userId, targetUser.id);
 
                 return res.json({
@@ -575,25 +425,28 @@ router.post("/request", authenticateToken, async (req, res) => {
                 });
             }
 
-            await pool.query(
-                `
-                UPDATE friend_requests
-                SET sender_id = ?, receiver_id = ?, status = 'pending', updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                `,
-                [userId, targetUser.id, existing.id]
+            await friendRequests.updateOne(
+                { id: existing.id },
+                {
+                    $set: {
+                        sender_id: userId,
+                        receiver_id: targetUser.id,
+                        status: "pending",
+                        updated_at: new Date(),
+                    }
+                }
             );
 
             return res.json({ message: "Friend request sent", friendshipStatus: "pending" });
         }
 
-        await pool.query(
-            `
-            INSERT INTO friend_requests (pair_key, sender_id, receiver_id, status)
-            VALUES (?, ?, ?, 'pending')
-            `,
-            [pairKey, userId, targetUser.id]
-        );
+        await db.insertWithId("friend_requests", {
+            pair_key: pairKey,
+            sender_id: userId,
+            receiver_id: targetUser.id,
+            status: "pending",
+            updated_at: new Date(),
+        });
 
         res.json({ message: "Friend request sent", friendshipStatus: "pending" });
     } catch (error) {
@@ -604,29 +457,24 @@ router.post("/request", authenticateToken, async (req, res) => {
 
 router.patch("/requests/:requestId", authenticateToken, async (req, res) => {
     const userId = req.user.id;
-    const requestId = Number(req.params.requestId);
+    const requestId = numericId(req.params.requestId);
     const action = String(req.body.action || "").toLowerCase();
+
+    if (!requestId) {
+        return res.status(400).json({ error: "Friend request is required" });
+    }
 
     if (!["accept", "reject"].includes(action)) {
         return res.status(400).json({ error: "Action must be accept or reject" });
     }
 
     try {
-        const [rows] = await pool.query(
-            `
-            SELECT *
-            FROM friend_requests
-            WHERE id = ?
-            LIMIT 1
-            `,
-            [requestId]
-        );
+        const friendRequests = await db.collection("friend_requests");
+        const request = await friendRequests.findOne({ id: requestId });
 
-        if (rows.length === 0) {
+        if (!request) {
             return res.status(404).json({ error: "Friend request not found" });
         }
-
-        const request = rows[0];
 
         if (Number(request.receiver_id) !== Number(userId)) {
             return res.status(403).json({ error: "You cannot manage this friend request" });
@@ -637,18 +485,12 @@ router.patch("/requests/:requestId", authenticateToken, async (req, res) => {
         }
 
         const nextStatus = action === "accept" ? "accepted" : "rejected";
-
-        await pool.query(
-            `
-            UPDATE friend_requests
-            SET status = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            `,
-            [nextStatus, requestId]
+        await friendRequests.updateOne(
+            { id: requestId },
+            { $set: { status: nextStatus, updated_at: new Date() } }
         );
 
         let conversationId = null;
-
         if (nextStatus === "accepted") {
             const conversation = await ensureConversation(request.sender_id, request.receiver_id);
             conversationId = conversation.id;
@@ -667,7 +509,7 @@ router.patch("/requests/:requestId", authenticateToken, async (req, res) => {
 
 router.delete("/users/:friendId", authenticateToken, async (req, res) => {
     const userId = req.user.id;
-    const friendId = Number(req.params.friendId);
+    const friendId = numericId(req.params.friendId);
 
     if (!friendId) {
         return res.status(400).json({ error: "Friend is required" });
@@ -684,33 +526,22 @@ router.delete("/users/:friendId", authenticateToken, async (req, res) => {
             return res.status(404).json({ error: "Friendship not found" });
         }
 
-        const [conversations] = await pool.query(
-            `
-            SELECT id
-            FROM private_conversations
-            WHERE (user_one_id = ? AND user_two_id = ?)
-               OR (user_one_id = ? AND user_two_id = ?)
-            `,
-            [userId, friendId, friendId, userId]
-        );
+        const privateConversations = await db.collection("private_conversations");
+        const privateMessages = await db.collection("private_messages");
+        const conversation = await privateConversations.findOne({
+            $or: [
+                { user_one_id: userId, user_two_id: friendId },
+                { user_one_id: friendId, user_two_id: userId },
+            ],
+        });
 
-        if (conversations.length > 0) {
-            await pool.query(
-                `
-                DELETE FROM private_conversations
-                WHERE id IN (?)
-                `,
-                [conversations.map((conversation) => conversation.id)]
-            );
+        if (conversation) {
+            await privateMessages.deleteMany({ conversation_id: conversation.id });
+            await privateConversations.deleteOne({ id: conversation.id });
         }
 
-        await pool.query(
-            `
-            DELETE FROM friend_requests
-            WHERE id = ?
-            `,
-            [friendship.id]
-        );
+        const friendRequests = await db.collection("friend_requests");
+        await friendRequests.deleteOne({ id: friendship.id });
 
         res.json({ message: "Friend removed successfully" });
     } catch (error) {
@@ -721,7 +552,7 @@ router.delete("/users/:friendId", authenticateToken, async (req, res) => {
 
 router.get("/conversations/:friendId/messages", authenticateToken, async (req, res) => {
     const userId = req.user.id;
-    const friendId = Number(req.params.friendId);
+    const friendId = numericId(req.params.friendId);
     const beforeId = Number(req.query.beforeId || 0);
     const limit = Math.min(Math.max(Number(req.query.limit || 40), 1), 100);
 
@@ -736,70 +567,50 @@ router.get("/conversations/:friendId/messages", authenticateToken, async (req, r
             return res.status(403).json({ error: "You can only message people you are friends with" });
         }
 
-        const [friendRows] = await pool.query(
-            `
-            SELECT id, username, email, user_code
-            FROM users
-            WHERE id = ?
-            LIMIT 1
-            `,
-            [friendId]
-        );
-
-        if (friendRows.length === 0) {
+        const friend = await publicUserById(friendId);
+        if (!friend) {
             return res.status(404).json({ error: "Friend not found" });
         }
 
         const conversation = await ensureConversation(userId, friendId);
-        const params = [conversation.id];
-        let beforeClause = "";
+        const privateMessages = await db.collection("private_messages");
+        const filter = { conversation_id: conversation.id };
 
         if (beforeId > 0) {
-            beforeClause = "AND private_messages.id < ?";
-            params.push(beforeId);
+            filter.id = { $lt: beforeId };
         }
 
-        params.push(limit);
-
-        const [messages] = await pool.query(
-            `
-            SELECT *
-            FROM (
-                SELECT
-                    private_messages.*,
-                    users.username,
-                    users.email,
-                    users.user_code
-                FROM private_messages
-                JOIN users ON users.id = private_messages.user_id
-                WHERE private_messages.conversation_id = ?
-                ${beforeClause}
-                ORDER BY private_messages.id DESC
-                LIMIT ?
-            ) recent_private_messages
-            ORDER BY id ASC
-            `,
-            params
-        );
-
-        const oldestId = messages.length ? messages[0].id : null;
-        const [olderRows] = oldestId
-            ? await pool.query(
-                `
-                SELECT COUNT(*) AS total
-                FROM private_messages
-                WHERE conversation_id = ?
-                  AND id < ?
-                `,
-                [conversation.id, oldestId]
-            )
-            : [[{ total: 0 }]];
+        const recentMessages = await privateMessages
+            .find(filter, { projection: { _id: 0 } })
+            .sort({ id: -1 })
+            .limit(limit)
+            .toArray();
+        const messages = recentMessages.reverse();
+        const users = await db.collection("users");
+        const userIds = [...new Set(messages.map((message) => message.user_id))];
+        const userRows = await users
+            .find({ id: { $in: userIds } }, { projection: { _id: 0, id: 1, username: 1, email: 1, user_code: 1 } })
+            .toArray();
+        const usersById = new Map(userRows.map((user) => [user.id, user]));
+        const enrichedMessages = messages.map((message) => {
+            const user = usersById.get(message.user_id) || {};
+            return {
+                ...message,
+                username: user.username,
+                email: user.email,
+                user_code: user.user_code,
+            };
+        });
+        const oldestId = enrichedMessages.length ? enrichedMessages[0].id : null;
+        const olderCount = oldestId
+            ? await privateMessages.countDocuments({ conversation_id: conversation.id, id: { $lt: oldestId } })
+            : 0;
 
         res.json({
             conversationId: conversation.id,
-            friend: friendRows[0],
-            messages,
-            hasMore: Number(olderRows[0]?.total || 0) > 0,
+            friend,
+            messages: enrichedMessages,
+            hasMore: olderCount > 0,
         });
     } catch (error) {
         console.error(error);
@@ -809,7 +620,7 @@ router.get("/conversations/:friendId/messages", authenticateToken, async (req, r
 
 router.post("/conversations/:friendId/messages", authenticateToken, async (req, res) => {
     const userId = req.user.id;
-    const friendId = Number(req.params.friendId);
+    const friendId = numericId(req.params.friendId);
     const content = String(req.body.content || "").trim();
 
     if (!friendId) {
@@ -828,24 +639,19 @@ router.post("/conversations/:friendId/messages", authenticateToken, async (req, 
         }
 
         const conversation = await ensureConversation(userId, friendId);
-        const [result] = await pool.query(
-            `
-            INSERT INTO private_messages (conversation_id, user_id, content)
-            VALUES (?, ?, ?)
-            `,
-            [conversation.id, userId, content]
-        );
-
-        const message = {
-            id: result.insertId,
+        const savedMessage = await db.insertWithId("private_messages", {
             conversation_id: conversation.id,
             user_id: userId,
-            userId,
             content,
+        });
+
+        const message = {
+            ...savedMessage,
+            userId,
             username: req.user.username,
             email: req.user.email,
             user_code: req.user.user_code,
-            created_at: new Date().toISOString(),
+            created_at: savedMessage.created_at.toISOString(),
         };
 
         const io = req.app.get("io");

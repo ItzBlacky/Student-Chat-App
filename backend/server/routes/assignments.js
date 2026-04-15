@@ -1,11 +1,11 @@
 const express = require("express");
-const router = express.Router();
 const multer = require("multer");
+const path = require("path");
 
-const pool = require("../db");
+const db = require("../db");
 const authenticateToken = require("../middleware/authMiddleware");
 
-const path = require("path");
+const router = express.Router();
 
 const submissionStorage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -22,38 +22,49 @@ function normalizeRole(role) {
     return String(role || "").toLowerCase();
 }
 
-async function getCourseRole(courseId, userId) {
-    const [rows] = await pool.query(
-        `
-        SELECT LOWER(role) AS role
-        FROM course_members
-        WHERE course_id = ? AND user_id = ?
-        `,
-        [courseId, userId]
-    );
+function numericId(value) {
+    const id = Number(value);
+    return Number.isFinite(id) ? id : null;
+}
 
-    return rows[0]?.role || null;
+async function getCourseRole(courseId, userId) {
+    const courseMembers = await db.collection("course_members");
+    const membership = await courseMembers.findOne({ course_id: courseId, user_id: userId });
+    return membership ? normalizeRole(membership.role) : null;
 }
 
 async function getAssignmentCourseRole(assignmentId, userId) {
-    const [rows] = await pool.query(
-        `
-        SELECT assignments.course_id, LOWER(course_members.role) AS role
-        FROM assignments
-        JOIN course_members ON assignments.course_id = course_members.course_id
-        WHERE assignments.id = ? AND course_members.user_id = ?
-        `,
-        [assignmentId, userId]
-    );
+    const assignments = await db.collection("assignments");
+    const assignment = await assignments.findOne({ id: assignmentId });
 
-    return rows[0] || null;
+    if (!assignment) {
+        return null;
+    }
+
+    const role = await getCourseRole(assignment.course_id, userId);
+    return role ? { course_id: assignment.course_id, role } : null;
 }
 
-// =======================
-// GET ASSIGNMENTS FOR A COURSE
-// =======================
+async function attachTeacherNames(assignments) {
+    const users = await db.collection("users");
+    const userIds = [...new Set(assignments.map((assignment) => assignment.user_id))];
+    const userRows = await users
+        .find({ id: { $in: userIds } }, { projection: { _id: 0, id: 1, username: 1 } })
+        .toArray();
+    const usersById = new Map(userRows.map((user) => [user.id, user]));
+
+    return assignments.map((assignment) => ({
+        ...assignment,
+        teacher_name: usersById.get(assignment.user_id)?.username || "Unknown",
+    }));
+}
+
 router.get("/:courseId", authenticateToken, async (req, res) => {
-    const courseId = req.params.courseId;
+    const courseId = numericId(req.params.courseId);
+
+    if (!courseId) {
+        return res.status(400).json({ error: "Course is required" });
+    }
 
     try {
         const courseRole = await getCourseRole(courseId, req.user.id);
@@ -62,30 +73,26 @@ router.get("/:courseId", authenticateToken, async (req, res) => {
             return res.status(403).json({ error: "You are not a member of this course" });
         }
 
-        const [assignments] = await pool.query(
-            `
-            SELECT assignments.*, users.username AS teacher_name
-            FROM assignments
-            JOIN users ON assignments.user_id = users.id
-            WHERE assignments.course_id = ?
-            ORDER BY assignments.created_at DESC
-            `,
-            [courseId]
-        );
+        const assignments = await db.collection("assignments");
+        const rows = await assignments
+            .find({ course_id: courseId }, { projection: { _id: 0 } })
+            .sort({ created_at: -1 })
+            .toArray();
 
-        res.json(assignments);
+        res.json(await attachTeacherNames(rows));
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Database error" });
     }
 });
 
-// =======================
-// CREATE ASSIGNMENT
-// =======================
 router.post("/:courseId", authenticateToken, async (req, res) => {
-    const courseId = req.params.courseId;
+    const courseId = numericId(req.params.courseId);
     const { title, description, dueDate } = req.body;
+
+    if (!courseId) {
+        return res.status(400).json({ error: "Course is required" });
+    }
 
     if (!title || title.trim() === "") {
         return res.status(400).json({ error: "Assignment title is required" });
@@ -102,34 +109,29 @@ router.post("/:courseId", authenticateToken, async (req, res) => {
             return res.status(403).json({ error: "Only course teachers or admins can create assignments" });
         }
 
-        const [result] = await pool.query(
-            "INSERT INTO assignments (course_id, user_id, title, description, due_date) VALUES (?, ?, ?, ?, ?)",
-            [courseId, req.user.id, title, description || "", dueDate || null]
-        );
+        const newAssignment = await db.insertWithId("assignments", {
+            course_id: courseId,
+            user_id: req.user.id,
+            title,
+            description: description || "",
+            due_date: dueDate || null,
+        });
 
-        const [newAssignment] = await pool.query(
-            `
-            SELECT assignments.*, users.username AS teacher_name
-            FROM assignments
-            JOIN users ON assignments.user_id = users.id
-            WHERE assignments.id = ?
-            `,
-            [result.insertId]
-        );
-
-        res.json(newAssignment[0]);
+        const [assignmentWithTeacher] = await attachTeacherNames([newAssignment]);
+        res.json(assignmentWithTeacher);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Database error" });
     }
 });
 
-// =======================
-// SUBMIT ASSIGNMENT
-// =======================
 router.post("/:assignmentId/submit", authenticateToken, uploadSubmission.single("file"), async (req, res) => {
-    const assignmentId = req.params.assignmentId;
+    const assignmentId = numericId(req.params.assignmentId);
     const { submissionText } = req.body;
+
+    if (!assignmentId) {
+        return res.status(400).json({ error: "Assignment is required" });
+    }
 
     try {
         const assignmentMembership = await getAssignmentCourseRole(assignmentId, req.user.id);
@@ -142,23 +144,29 @@ router.post("/:assignmentId/submit", authenticateToken, uploadSubmission.single(
             return res.status(403).json({ error: "Only students can submit assignments" });
         }
 
-        const filePath = req.file ? req.file.filename : null;
+        const submissions = await db.collection("assignment_submissions");
+        const existing = await submissions.findOne({ assignment_id: assignmentId, user_id: req.user.id });
+        const filePath = req.file ? req.file.filename : existing?.file_path || null;
 
-        const [existing] = await pool.query(
-            "SELECT * FROM assignment_submissions WHERE assignment_id = ? AND user_id = ?",
-            [assignmentId, req.user.id]
-        );
-
-        if (existing.length > 0) {
-            await pool.query(
-                "UPDATE assignment_submissions SET submission_text = ?, file_path = ?, submitted_at = CURRENT_TIMESTAMP WHERE id = ?",
-                [submissionText || "", filePath, existing[0].id]
+        if (existing) {
+            await submissions.updateOne(
+                { id: existing.id },
+                {
+                    $set: {
+                        submission_text: submissionText || "",
+                        file_path: filePath,
+                        submitted_at: new Date(),
+                    }
+                }
             );
         } else {
-            await pool.query(
-                "INSERT INTO assignment_submissions (assignment_id, user_id, submission_text, file_path) VALUES (?, ?, ?, ?)",
-                [assignmentId, req.user.id, submissionText || "", filePath]
-            );
+            await db.insertWithId("assignment_submissions", {
+                assignment_id: assignmentId,
+                user_id: req.user.id,
+                submission_text: submissionText || "",
+                file_path: filePath,
+                submitted_at: new Date(),
+            });
         }
 
         res.json({ message: "Assignment submitted successfully" });
@@ -168,11 +176,12 @@ router.post("/:assignmentId/submit", authenticateToken, uploadSubmission.single(
     }
 });
 
-// =======================
-// GET SUBMISSIONS FOR AN ASSIGNMENT
-// =======================
 router.get("/:assignmentId/submissions", authenticateToken, async (req, res) => {
-    const assignmentId = req.params.assignmentId;
+    const assignmentId = numericId(req.params.assignmentId);
+
+    if (!assignmentId) {
+        return res.status(400).json({ error: "Assignment is required" });
+    }
 
     try {
         const assignmentMembership = await getAssignmentCourseRole(assignmentId, req.user.id);
@@ -185,18 +194,25 @@ router.get("/:assignmentId/submissions", authenticateToken, async (req, res) => 
             return res.status(403).json({ error: "Only course teachers or admins can view submissions" });
         }
 
-        const [submissions] = await pool.query(
-            `
-            SELECT assignment_submissions.*, users.username, users.email
-            FROM assignment_submissions
-            JOIN users ON assignment_submissions.user_id = users.id
-            WHERE assignment_submissions.assignment_id = ?
-            ORDER BY assignment_submissions.submitted_at DESC
-            `,
-            [assignmentId]
-        );
+        const submissions = await db.collection("assignment_submissions");
+        const users = await db.collection("users");
+        const submissionRows = await submissions
+            .find({ assignment_id: assignmentId }, { projection: { _id: 0 } })
+            .sort({ submitted_at: -1 })
+            .toArray();
+        const userIds = [...new Set(submissionRows.map((submission) => submission.user_id))];
+        const userRows = await users
+            .find({ id: { $in: userIds } }, { projection: { _id: 0, id: 1, username: 1, email: 1 } })
+            .toArray();
+        const usersById = new Map(userRows.map((user) => [user.id, user]));
 
-        res.json(submissions);
+        const rows = submissionRows.map((submission) => ({
+            ...submission,
+            username: usersById.get(submission.user_id)?.username || "Unknown",
+            email: usersById.get(submission.user_id)?.email || "",
+        }));
+
+        res.json(rows);
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: "Database error" });

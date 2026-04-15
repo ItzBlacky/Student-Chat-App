@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "nodemon server/server.js",
-    "setup-db": "mysql -u root -proot < database_setup.sql",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "engines": {
@@ -30,8 +29,8 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.1.1",
     "multer": "^2.1.1",
-    "mysql2": "^3.18.1",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
