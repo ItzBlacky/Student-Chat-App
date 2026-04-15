@@ -91,18 +91,23 @@
                 </div>
 
                 <div class="toolbar-search">
-                    <div class="search-shell">
-                        <div class="search-input-row">
-                            <input type="text" id="globalSearchInput" placeholder="Search courses, friends, or people by name or friend ID">
-                            <button id="executeSearchBtn" class="primary-btn search-execute-btn" type="button">Search</button>
+                    <button id="searchToggleBtn" class="ghost-btn search-toggle-btn" type="button" aria-label="Open search" aria-expanded="false" aria-controls="toolbarSearchPanel">
+                        <span class="search-toggle-icon" aria-hidden="true"></span>
+                    </button>
+                    <div id="toolbarSearchPanel" class="search-panel">
+                        <div class="search-shell">
+                            <div class="search-input-row">
+                                <input type="text" id="globalSearchInput" placeholder="Search courses, friends, or people by name or friend ID">
+                                <button id="executeSearchBtn" class="primary-btn search-execute-btn" type="button">Search</button>
+                            </div>
+                            <div id="searchResults" class="search-results hidden"></div>
                         </div>
-                        <div id="searchResults" class="search-results hidden"></div>
-                    </div>
-                    <div class="search-filters">
-                        <button type="button" class="search-filter active" data-filter="all">All</button>
-                        <button type="button" class="search-filter" data-filter="courses">Courses</button>
-                        <button type="button" class="search-filter" data-filter="friends">Friends</button>
-                        <button type="button" class="search-filter" data-filter="people">People</button>
+                        <div class="search-filters">
+                            <button type="button" class="search-filter active" data-filter="all">All</button>
+                            <button type="button" class="search-filter" data-filter="courses">Courses</button>
+                            <button type="button" class="search-filter" data-filter="friends">Friends</button>
+                            <button type="button" class="search-filter" data-filter="people">People</button>
+                        </div>
                     </div>
                 </div>
 

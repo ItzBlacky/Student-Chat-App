@@ -187,6 +187,7 @@ router.get("/:id/members", authenticateToken, async (req, res) => {
 router.patch("/:id/members/:userId", authenticateToken, async (req, res) => {
     const courseId = req.params.id;
     const targetUserId = Number(req.params.userId);
+    const currentUserId = Number(req.user.id);
     const requestedRole = normalizeCourseRole(req.body.role);
 
     if (!["teacher", "student"].includes(requestedRole)) {
@@ -194,7 +195,7 @@ router.patch("/:id/members/:userId", authenticateToken, async (req, res) => {
     }
 
     try {
-        const membership = await getCourseMembership(courseId, req.user.id);
+        const membership = await getCourseMembership(courseId, currentUserId);
 
         if (!membership) {
             return res.status(403).json({ error: "You are not a member of this course" });
@@ -204,7 +205,7 @@ router.patch("/:id/members/:userId", authenticateToken, async (req, res) => {
             return res.status(403).json({ error: "Only course admins can manage roles" });
         }
 
-        if (targetUserId === req.user.id) {
+        if (targetUserId === currentUserId) {
             return res.status(400).json({ error: "Course admin role cannot be changed here" });
         }
 
@@ -217,7 +218,7 @@ router.patch("/:id/members/:userId", authenticateToken, async (req, res) => {
             return res.status(404).json({ error: "Course not found" });
         }
 
-        if (courseRows[0].user_id === targetUserId) {
+        if (Number(courseRows[0].user_id) === targetUserId) {
             return res.status(400).json({ error: "Course creator remains the admin" });
         }
 

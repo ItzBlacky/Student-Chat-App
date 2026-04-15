@@ -130,6 +130,8 @@ const closeDeleteFriendModalBtn = document.getElementById("closeDeleteFriendModa
 const cancelDeleteFriendBtn = document.getElementById("cancelDeleteFriendBtn");
 const confirmDeleteFriendBtn = document.getElementById("confirmDeleteFriendBtn");
 
+const toolbarSearch = document.querySelector(".toolbar-search");
+const searchToggleBtn = document.getElementById("searchToggleBtn");
 const globalSearchInput = document.getElementById("globalSearchInput");
 const executeSearchBtn = document.getElementById("executeSearchBtn");
 const searchResults = document.getElementById("searchResults");
@@ -170,6 +172,31 @@ function setupThemeToggle() {
         const currentTheme = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
         applyTheme(currentTheme === "dark" ? "light" : "dark");
     });
+}
+
+function isSearchExpanded() {
+    return !!toolbarSearch?.classList.contains("search-open");
+}
+
+function setSearchExpanded(expanded, options = {}) {
+    if (!toolbarSearch || !searchToggleBtn) return;
+
+    toolbarSearch.classList.toggle("search-open", expanded);
+    searchToggleBtn.setAttribute("aria-expanded", String(expanded));
+    searchToggleBtn.setAttribute("aria-label", expanded ? "Close search" : "Open search");
+
+    if (!expanded) {
+        searchResults?.classList.add("hidden");
+        return;
+    }
+
+    if (options.focusInput !== false) {
+        window.setTimeout(() => globalSearchInput?.focus(), 0);
+    }
+
+    if (globalSearchInput?.value.trim()) {
+        performSearch(globalSearchInput.value.trim());
+    }
 }
 
 function escapeHtml(value) {
@@ -213,8 +240,12 @@ function normalizeRole(role) {
     return String(role || "").toLowerCase();
 }
 
+function getCourseRole(course) {
+    return normalizeRole(course?.course_role || course?.role || "student");
+}
+
 function updateUserChrome() {
-    const courseRole = normalizeRole(selectedCourse?.course_role);
+    const courseRole = getCourseRole(selectedCourse);
     const viewLabel = activeView === "course" && selectedCourse
         ? `${courseRole || "member"} in ${selectedCourse.name}`
         : activeView === "private" && selectedFriend
@@ -275,7 +306,7 @@ function setPrivateTypingIndicator(text) {
 }
 
 function getSelectedCourseRole() {
-    return normalizeRole(selectedCourse?.course_role);
+    return getCourseRole(selectedCourse);
 }
 
 function canCreateAssignments() {
@@ -971,7 +1002,7 @@ function goBack() {
 }
 
 function getCourseSubtitle(course) {
-    const courseRole = normalizeRole(course?.course_role || "student");
+    const courseRole = getCourseRole(course);
     if (courseRole === "admin") {
         return "You are the course admin. Manage roles, assignments, and activity from here.";
     }
@@ -1181,11 +1212,11 @@ function renderCourses(courses) {
 
         const meta = document.createElement("div");
         meta.className = "course-meta";
-        meta.textContent = `${normalizeRole(course.course_role || "student")} role`;
+        meta.textContent = `${getCourseRole(course)} role`;
 
         const badge = document.createElement("span");
         badge.className = "course-badge";
-        badge.textContent = normalizeRole(course.course_role || "student");
+        badge.textContent = getCourseRole(course);
 
         main.appendChild(name);
         main.appendChild(meta);
@@ -1196,7 +1227,7 @@ function renderCourses(courses) {
         actionBtn.type = "button";
         actionBtn.className = "course-action-btn";
 
-        const isAdminCourse = normalizeRole(course.course_role) === "admin";
+        const isAdminCourse = getCourseRole(course) === "admin";
         actionBtn.textContent = isAdminCourse ? "Delete" : "Leave";
         actionBtn.addEventListener("click", async (event) => {
             event.stopPropagation();
@@ -1859,7 +1890,7 @@ async function performSearch(query) {
                 results.push({
                     type: "course",
                     title: course.name,
-                    meta: `Joined course · ${normalizeRole(course.course_role || "student")}`,
+                    meta: `Joined course · ${getCourseRole(course)}`,
                     actionLabel: "Open",
                     action: () => openCourse(course),
                 });
@@ -1949,6 +1980,7 @@ function executeSearch() {
     const query = globalSearchInput?.value.trim() || "";
     if (!query) {
         searchResults.classList.add("hidden");
+        setSearchExpanded(false, { focusInput: false });
         return;
     }
 
@@ -1956,6 +1988,7 @@ function executeSearch() {
         searchResults.classList.add("hidden");
         renderSearchWorkspace(query, currentSearchResults);
         setMainView("search", { skipHistory: activeView === "search" });
+        setSearchExpanded(false, { focusInput: false });
     });
 }
 
@@ -2292,7 +2325,15 @@ if (globalSearchInput) {
 
         if (event.key === "Escape") {
             searchResults.classList.add("hidden");
+            setSearchExpanded(false, { focusInput: false });
         }
+    });
+}
+
+if (searchToggleBtn) {
+    searchToggleBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setSearchExpanded(!isSearchExpanded());
     });
 }
 
@@ -2330,8 +2371,10 @@ if (confirmDeleteFriendBtn) {
 
 document.addEventListener("click", (event) => {
     if (!searchResults || !globalSearchInput) return;
+    if (toolbarSearch?.contains(event.target)) return;
     if (searchResults.contains(event.target) || globalSearchInput.contains(event.target)) return;
     searchResults.classList.add("hidden");
+    setSearchExpanded(false, { focusInput: false });
 });
 
 if (userSummaryModal) {

@@ -490,6 +490,7 @@ a {
     gap: 18px;
     align-items: center;
     position: relative;
+    z-index: 15;
     overflow: visible;
     border-radius: var(--radius-xl);
     padding: 22px 26px;
@@ -505,6 +506,40 @@ a {
     max-width: 640px;
     position: relative;
     z-index: 30;
+    display: grid;
+    gap: 10px;
+}
+
+.search-toggle-btn {
+    display: none;
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    padding: 0;
+    place-items: center;
+}
+
+.search-toggle-icon {
+    position: relative;
+    width: 18px;
+    height: 18px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+}
+
+.search-toggle-icon::after {
+    content: "";
+    position: absolute;
+    right: -7px;
+    bottom: -4px;
+    width: 9px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    transform: rotate(45deg);
+}
+
+.search-panel {
     display: grid;
     gap: 10px;
 }
@@ -1702,9 +1737,42 @@ html[data-theme="dark"] .count-pill {
 
     .app-header {
         justify-content: stretch;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+    }
+
+    .toolbar-search {
+        min-width: 0;
+        width: auto;
+        justify-items: end;
+        justify-self: end;
+    }
+
+    .search-toggle-btn {
+        display: grid;
+    }
+
+    .search-panel {
+        display: none;
+        width: 100%;
+    }
+
+    .toolbar-search.search-open {
+        grid-column: 1 / -1;
+        width: 100%;
+        justify-self: stretch;
+    }
+
+    .toolbar-search.search-open .search-toggle-btn {
+        justify-self: end;
+    }
+
+    .toolbar-search.search-open .search-panel {
+        display: grid;
     }
 
     .app-header-actions {
+        grid-column: 1 / -1;
         flex-wrap: wrap;
     }
 
