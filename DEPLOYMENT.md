@@ -58,7 +58,7 @@ FRONTEND_API_BASE_URL=https://your-backend-service.example.com
 FRONTEND_SOCKET_URL=https://your-backend-service.example.com
 ```
 
-The frontend build writes those values into `frontend/js/config.js`. Locally, if no frontend config is set and the page is opened on `localhost`, the app falls back to `http://localhost:5000`.
+The frontend build writes those values into `frontend/js/config.js`. Locally, if no frontend config is set and the page is opened on `localhost`, the app falls back to `https://student-chat-application.onrender.com`.
 
 Frontend commands:
 
@@ -84,7 +84,7 @@ cd frontend
 npm run dev
 ```
 
-Then open `http://localhost:5173`.
+Then open `https://student-chat-application.onrender.com`.
 
 ## GoDaddy and Vercel
 

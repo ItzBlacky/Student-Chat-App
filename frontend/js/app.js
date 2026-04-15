@@ -1,7 +1,7 @@
 const runtimeConfig = window.STUDYMATE_CONFIG || {};
 const localHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
 const defaultBackendUrl = localHostnames.has(window.location.hostname) || window.location.protocol === "file:"
-    ? "http://localhost:5000"
+    ? "https://student-chat-application.onrender.com"
     : "";
 
 function normalizeBaseUrl(value) {
