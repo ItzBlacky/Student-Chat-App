@@ -8,6 +8,14 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
 
+if (!process.env.MONGO_URI && !process.env.MONGODB_URI) {
+  throw new Error("MONGO_URI or MONGODB_URI is required");
+}
+
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET is required");
+}
+
 const db = require("./db");
 const authRoutes = require("./routes/auth");
 const notesRoutes = require("./routes/notes");
@@ -274,6 +282,7 @@ function startServer(initialPort, maxAttempts = 10) {
       server.close(() => tryListen());
     } else {
       console.error('Server error:', err);
+      process.exit(1);
     }
   });
 
@@ -285,9 +294,12 @@ async function initializeServer() {
     if (typeof db.runMigrations === "function") {
       await db.runMigrations();
     }
+    await (await db.getDb()).command({ ping: 1 });
+    console.log("MongoDB connected");
     startServer(PORT);
   } catch (error) {
-    console.error("Startup migration failed:", error);
+    console.error("Startup failed:", error);
+    process.exit(1);
   }
 }
 
