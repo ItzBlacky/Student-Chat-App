@@ -17,7 +17,7 @@ const contentTypes = {
 };
 
 function resolveRequestPath(url) {
-  const parsedUrl = new URL(url, `http://localhost:${port}`);
+  const parsedUrl = new URL(url, `https://student-chat-application.onrender.com`);
   const requestedPath = decodeURIComponent(parsedUrl.pathname);
   const safePath = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
   const filePath = path.join(root, safePath === "/" ? "index.html" : safePath);
@@ -46,5 +46,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Frontend running on http://localhost:${port}`);
+  console.log(`Frontend running on https://student-chat-application.onrender.com`);
 });
