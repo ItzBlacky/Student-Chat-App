@@ -1,13 +1,14 @@
-require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
 const jwt = require("jsonwebtoken");
-const pool = require("./db");
 
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
+
+const pool = require("./db");
 const authRoutes = require("./routes/auth");
 const notesRoutes = require("./routes/notes");
 const coursesRoutes = require("./routes/courses");
@@ -18,10 +19,30 @@ const friendsRoutes = require("./routes/friends");
 const app = express();
 const server = http.createServer(app);
 
-const io = new Server(server, {
-  cors: {
-    origin: "*"
+function parseAllowedOrigins() {
+  const configuredOrigins = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "";
+  const origins = configuredOrigins
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return origins.length > 0 ? origins : ["*"];
+}
+
+const allowedOrigins = parseAllowedOrigins();
+const corsOptions = {
+  origin(origin, callback) {
+    if (allowedOrigins.includes("*") || !origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`Origin ${origin} is not allowed by CORS`));
   }
+};
+
+const io = new Server(server, {
+  cors: corsOptions
 });
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -35,17 +56,21 @@ function emitCoursePresence(courseId) {
   io.to(`course_${courseId}`).emit("coursePresence", list);
 }
 
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
-
-// Serve front-end assets (index.html, js, css)
-app.use(express.static(path.join(__dirname, "..")));
 
 // socket access in routes
 app.set("io", io);
 
 // static uploads
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+app.get("/", (req, res) => {
+  res.json({
+    service: "StudyMate API",
+    status: "ok"
+  });
+});
 
 // ROUTES (clean structure)
 app.use("/auth", authRoutes);

@@ -1,4 +1,30 @@
-const socket = io();
+const runtimeConfig = window.STUDYMATE_CONFIG || {};
+const localHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+const defaultBackendUrl = localHostnames.has(window.location.hostname) || window.location.protocol === "file:"
+    ? "http://localhost:5000"
+    : "";
+
+function normalizeBaseUrl(value) {
+    return String(value || "").trim().replace(/\/+$/, "");
+}
+
+const API_BASE_URL = normalizeBaseUrl(runtimeConfig.API_BASE_URL || defaultBackendUrl);
+const SOCKET_URL = normalizeBaseUrl(runtimeConfig.SOCKET_URL || API_BASE_URL);
+
+function appUrl(path) {
+    if (/^https?:\/\//i.test(path)) {
+        return path;
+    }
+
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
+}
+
+function uploadUrl(filename) {
+    return appUrl(`/uploads/${encodeURIComponent(filename)}`);
+}
+
+const socket = SOCKET_URL ? io(SOCKET_URL) : io();
 
 let authToken = localStorage.getItem("token") || null;
 let currentUser = null;
@@ -228,7 +254,7 @@ async function safeFetch(url, options = {}) {
         ...getAuthHeaders(),
     };
 
-    const response = await fetch(url, options);
+    const response = await fetch(appUrl(url), options);
     if (response.status === 401) {
         handleUnauthorized();
     }
@@ -1728,7 +1754,7 @@ function renderNotes(notes) {
 
         const link = document.createElement("a");
         link.className = "note-link";
-        link.href = `/uploads/${note.file_path}`;
+        link.href = uploadUrl(note.file_path);
         link.target = "_blank";
         link.textContent = "Open file";
 
@@ -1831,7 +1857,7 @@ async function viewSubmissions(assignmentId) {
                 <h5>${escapeHtml(submission.username)} (${escapeHtml(submission.email)})</h5>
                 <p><strong>Submitted:</strong> ${escapeHtml(new Date(submission.submitted_at).toLocaleString())}</p>
                 ${submission.submission_text ? `<p><strong>Text:</strong> ${escapeHtml(submission.submission_text)}</p>` : ""}
-                ${submission.file_path ? `<p><strong>File:</strong> <a class="note-link" href="/uploads/${encodeURIComponent(submission.file_path)}" target="_blank">${escapeHtml(submission.file_path)}</a></p>` : ""}
+                ${submission.file_path ? `<p><strong>File:</strong> <a class="note-link" href="${uploadUrl(submission.file_path)}" target="_blank">${escapeHtml(submission.file_path)}</a></p>` : ""}
             </div>
         `).join("");
     }
@@ -2136,7 +2162,7 @@ if (loginBtn) {
         }
 
         try {
-            const response = await fetch("/auth/login", {
+            const response = await fetch(appUrl("/auth/login"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email, password }),
@@ -2173,7 +2199,7 @@ if (registerBtn) {
         }
 
         try {
-            const response = await fetch("/auth/register", {
+            const response = await fetch(appUrl("/auth/register"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username, email, password }),

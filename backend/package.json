@@ -2,12 +2,15 @@
   "name": "studymate",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
     "dev": "nodemon server/server.js",
     "setup-db": "mysql -u root -proot < database_setup.sql",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "repository": {
     "type": "git",

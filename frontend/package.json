@@ -1,0 +1,9 @@
+{
+  "name": "studymate-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/write-config.js",
+    "dev": "node scripts/dev-server.js"
+  }
+}
