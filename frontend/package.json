@@ -5,5 +5,8 @@
   "scripts": {
     "build": "node scripts/write-config.js",
     "dev": "node scripts/dev-server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1"
   }
 }

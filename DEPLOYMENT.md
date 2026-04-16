@@ -54,8 +54,8 @@ Deploy from the `frontend/` folder.
 Set these Vercel environment variables:
 
 ```env
-FRONTEND_API_BASE_URL=https://your-backend-service.example.com
-FRONTEND_SOCKET_URL=https://your-backend-service.example.com
+REACT_APP_API_URL=https://your-backend-service.example.com
+REACT_APP_SOCKET_URL=https://your-backend-service.example.com
 ```
 
 The frontend build writes those values into `frontend/js/config.js`. Locally, if no frontend config is set and the page is opened on `localhost`, the app falls back to `https://student-chat-application.onrender.com`.
