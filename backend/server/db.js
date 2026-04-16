@@ -88,6 +88,7 @@ async function runMigrations() {
     const db = await getDb();
 
     await Promise.all([
+        db.collection("users").createIndex({ id: 1 }, { unique: true }),
         db.collection("users").createIndex({ email: 1 }, { unique: true }),
         db.collection("users").createIndex({ username: 1 }, { unique: true }),
         db.collection("users").createIndex({ user_code: 1 }, { unique: true }),
